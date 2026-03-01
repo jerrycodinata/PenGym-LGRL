@@ -11,8 +11,8 @@ import sys
 import getopt
 import pengym.utilities as utils
 from pengym.storyboard import Storyboard
-from stablebaselines3 import PPO
-from stablebaselines3.common.vec_env import DummyVecEnv
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 storyboard = Storyboard()
