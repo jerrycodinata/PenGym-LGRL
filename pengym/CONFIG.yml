@@ -3,17 +3,17 @@
 # Global configuration values in PenGym
 #########################################
 
-pengym_source: home/cyuser/public/PenGym
+pengym_source: home/pengym/PenGym-LGRL
 
 # Should be the same as path in CyRIS CONFIG
-cyber_range_dir: home/cyuser/public/cyris/cyber_range
+cyber_range_dir: home/lab/cyris-1.4/cyber_range
 
-host_mgmt_addr: 172.16.1.4
+host_mgmt_addr: 192.168.192.128
 host_virbr_addr: 192.168.122.1
-host_account: cyuser
-guest_basevm_config_file: /home/cyuser/images/ubuntubase.xml
+host_account: lab
+guest_basevm_config_file: /var/lib/libvirt/images/basevm_20.04.xml
 
-scenario_name: medium-multi-site
+scenario_name: medium
 
 range_id: 44
 
