@@ -177,7 +177,14 @@ def run_deterministic_agent(env, deterministic_path):
 #############################################################################
 # Run pentesting with a PPO agent in the environment 'env'
 def run_ppo_agent(env):
-    vec_env = DummyVecEnv([lambda: Monitor(env)])
+    def make_env():
+        env = pengym.create_environment(scenario_name)
+        return Monitor(env)
+
+    vec_env = DummyVecEnv([make_env])
+
+    print(vec_env.action_space)
+    print(vec_env.action_space.n)
 
     model = PPO(
         "MlpPolicy",
@@ -200,8 +207,13 @@ def run_ppo_agent(env):
 
     while not done and step_count < MAX_STEPS:
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, done, truncated, info = vec_env.step(action)
+        print("Action:", action)
+        obs, rewards, dones, infos = vec_env.step(action)
+
         step_count += 1
+
+        if dones[0]:
+            obs = vec_env.reset()
 
     return done, truncated, step_count
 
