@@ -11,6 +11,9 @@ import sys
 import getopt
 import pengym.utilities as utils
 from pengym.storyboard import Storyboard
+from stablebaselines3 import PPO
+from stablebaselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.monitor import Monitor
 
 storyboard = Storyboard()
 
@@ -83,6 +86,7 @@ ACTION_TARGETS = {HOST1_0: (1, 0), HOST1_1: (1, 1), HOST1_2: (1, 2), HOST1_3: (1
 # Agent types
 AGENT_TYPE_RANDOM = "random"
 AGENT_TYPE_DETERMINISTIC = "deterministic"
+AGENT_TYPE_PPO = "ppo"
 DEFAULT_AGENT_TYPE = AGENT_TYPE_DETERMINISTIC
 
 # Other constants
@@ -167,6 +171,37 @@ def run_deterministic_agent(env, deterministic_path):
         if step_count >= MAX_STEPS:
             logging.warning(f"Abort execution after {step_count} steps")
             break
+
+    return done, truncated, step_count
+
+#############################################################################
+# Run pentesting with a PPO agent in the environment 'env'
+def run_ppo_agent(env):
+    vec_env = DummyVecEnv([lambda: Monitor(env)])
+
+    model = PPO(
+        "MlpPolicy",
+        vec_env,
+        learning_rate=3e-4,
+        n_steps=2048,
+        batch_size=64,
+        n_epochs=10,
+        gamma=0.99,
+        verbose=1
+    )
+
+    model.learn(total_timesteps=10000)
+    model.save("ppo_pengym_nasim")
+
+    obs = vec_env.reset()
+    done = False # Indicate that execution is done
+    truncated = False # Indicate that execution is truncated
+    step_count = 0 # Count the number of execution steps
+
+    while not done and step_count < MAX_STEPS:
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, done, truncated, info = vec_env.step(action)
+        step_count += 1
 
     return done, truncated, step_count
 
@@ -300,6 +335,11 @@ def main(args):
     if agent_type == AGENT_TYPE_RANDOM:
         print("* Perform pentesting using a RANDOM agent...")
         done, truncated, step_count = run_random_agent(env)
+
+    # Run experiment using a PPO agent
+    elif agent_type == AGENT_TYPE_PPO:
+        print("* Perform pentesting using a PPO agent...")
+        done, truncated, step_count = run_ppo_agent(env)
 
     # Run experiment using a deterministic agent
     elif agent_type == AGENT_TYPE_DETERMINISTIC:
