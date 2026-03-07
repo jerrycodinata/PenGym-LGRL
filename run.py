@@ -17,6 +17,12 @@ from stable_baselines3.common.monitor import Monitor
 import gymnasium as gym
 import numpy as np
 
+storyboard = Storyboard()
+
+#############################################################################
+# Wrappers
+#############################################################################
+
 class IntActionWrapper(gym.ActionWrapper):
     def action(self, action):
         if isinstance(action, np.ndarray):
@@ -26,10 +32,99 @@ class IntActionWrapper(gym.ActionWrapper):
             return int(action)
         return action
 
-storyboard = Storyboard()
 
 #############################################################################
-# Constants
+# LGRL Constants & Methods
+#############################################################################
+
+# Define subgoals and mapping to indices (SUBGOAL_TO_IDX = {"DISCOVER_HOST": 0, "ENUM_SERVICE": 1, "EXPLOIT_ACCESS": 2, "PRIV_ESC": 3})
+SUBGOALS = [
+    "DISCOVER_HOST",
+    "ENUM_SERVICE",
+    "EXPLOIT_ACCESS",
+    "PRIV_ESC"
+]
+
+SUBGOAL_TO_IDX = {g: i for i, g in enumerate(SUBGOALS)}
+NUM_SUBGOALS = len(SUBGOALS)
+
+# Function to convert subgoal name to one-hot vector (vec = DISCOVER_HOST -> [1, 0, 0, 0], ENUM_SERVICE -> [0, 1, 0, 0], etc.)
+def one_hot_subgoal(subgoal):
+    vec = np.zeros(NUM_SUBGOALS, dtype=np.float32)
+    vec[SUBGOAL_TO_IDX[subgoal]] = 1.0
+    return vec
+
+
+# LGRL Subgoal Manager (dummy implementation that updates subgoal based on changes in state counts of known hosts/services/shells)
+class SubgoalManager:
+    def __init__(self):
+        self.current_subgoal = "DISCOVER_HOST"
+        self.just_completed = False
+        self.prev_counts = {
+            "hosts": 0,
+            "services": 0,
+            "user_shells": 0,
+            "root_shells": 0
+        }
+
+    # Update subgoal based on changes in state counts (e.g., if number of known hosts increases, move from DISCOVER_HOST to ENUM_SERVICE, etc.)
+    def update(self, state):
+        self.just_completed = False
+
+        counts = {
+            "hosts": state.get_num_known_hosts(), # Need to be changed
+            "services": state.get_num_known_services(), # Need to be changed
+            "user_shells": state.get_num_user_shells(), # Need to be changed
+            "root_shells": state.get_num_root_shells() # Need to be changed
+        }
+
+        if self.current_subgoal == "DISCOVER_HOST":
+            if counts["hosts"] > self.prev_counts["hosts"]:
+                self.current_subgoal = "ENUM_SERVICE"
+                self.just_completed = True
+
+        elif self.current_subgoal == "ENUM_SERVICE":
+            if counts["services"] > self.prev_counts["services"]:
+                self.current_subgoal = "EXPLOIT_ACCESS"
+                self.just_completed = True
+
+        elif self.current_subgoal == "EXPLOIT_ACCESS":
+            if counts["user_shells"] > self.prev_counts["user_shells"]:
+                self.current_subgoal = "PRIV_ESC"
+                self.just_completed = True
+
+        self.prev_counts = counts
+
+    # Get the current subgoal
+    def get(self):
+        return self.current_subgoal
+
+# LGRL Subgoal Wrapper that adds the current subgoal as a one-hot vector to the observation (obs = [original_obs, g_vec], where g_vec is the one-hot vector for the current subgoal)
+class SubgoalObsWrapper(gym.ObservationWrapper):
+    def __init__(self, env, subgoal_manager):
+        super().__init__(env)
+        self.subgoal_manager = subgoal_manager
+
+        # Dimension of the original observation space (e.g., if original obs is a vector of length 10, obs_dim = 10)
+        obs_dim = env.observation_space.shape[0]
+
+        # Create a new Box with low=0, high=100, and shape=(obs_dim + NUM_SUBGOALS,) to accommodate the original observation and the one-hot subgoal vector
+        # The low and high values can be adjusted based on the expected range of the original observations; here we use 0 and 100 as placeholders
+        self.observation_space = gym.spaces.Box(
+            low=0,
+            high=100,
+            shape=(obs_dim + NUM_SUBGOALS,),
+            dtype=np.float32
+        )
+
+    # Update subgoal manager based on the new state after each action and then return the augmented observation
+    def observation(self, obs):
+        g = self.subgoal_manager.get()
+        g_vec = one_hot_subgoal(g)
+        return np.concatenate([obs.astype(np.float32), g_vec])
+
+#############################################################################
+# Deterministic Constants
 #############################################################################
 
 # Action names/targets
