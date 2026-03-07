@@ -122,6 +122,32 @@ class SubgoalObsWrapper(gym.ObservationWrapper):
         g = self.subgoal_manager.get()
         g_vec = one_hot_subgoal(g)
         return np.concatenate([obs.astype(np.float32), g_vec])
+    
+# LGRL Reward Wrapper that adds an intrinsic reward (lambda_) when a subgoal is just completed (i.e., when the subgoal manager indicates that the current subgoal was just completed)
+class SubgoalRewardWrapper(gym.RewardWrapper):
+    def __init__(self, env, subgoal_manager, lambda_=0.5):
+        super().__init__(env)
+        self.subgoal_manager = subgoal_manager
+        self.lambda_ = lambda_
+
+    def reward(self, reward):
+        if self.subgoal_manager.just_completed:
+            return reward + self.lambda_
+        return reward
+
+# LGRL Subgoal Update Wrapper that updates the subgoal manager after each action (i.e., after each step, it calls subgoal_manager.update(state) to check if the subgoal should be updated based on the new state)
+class SubgoalUpdateWrapper(gym.Wrapper):
+    def __init__(self, env, subgoal_manager):
+        super().__init__(env)
+        self.subgoal_manager = subgoal_manager
+
+    def step(self, action):
+        obs, reward, done, truncated, info = self.env.step(action)
+
+        state = self.env.unwrapped.current_state
+        self.subgoal_manager.update(state)
+
+        return obs, reward, done, truncated, info
 
 #############################################################################
 # Deterministic Constants
@@ -193,6 +219,7 @@ ACTION_TARGETS = {HOST1_0: (1, 0), HOST1_1: (1, 1), HOST1_2: (1, 2), HOST1_3: (1
 AGENT_TYPE_RANDOM = "random"
 AGENT_TYPE_DETERMINISTIC = "deterministic"
 AGENT_TYPE_PPO = "ppo"
+AGENT_TYPE_LGRL = "lgrl"
 DEFAULT_AGENT_TYPE = AGENT_TYPE_DETERMINISTIC
 
 # Other constants
@@ -281,12 +308,101 @@ def run_deterministic_agent(env, deterministic_path):
     return done, truncated, step_count
 
 #############################################################################
-# Run pentesting with a PPO agent in the environment 'env'
-def run_ppo_agent(env, scenario_path):
+# Run pentesting with a Vanilla PPO agent for the specific scenario in 'scenario_path'
+def run_ppo_agent(scenario_path):
     def make_env():
         env = create_pengym_custom_environment(scenario_path)
         env = IntActionWrapper(env)
         env = gym.wrappers.TimeLimit(env, max_episode_steps=100)
+        return Monitor(env)
+
+    vec_env = DummyVecEnv([make_env])
+
+    print("========================================")
+    print(vec_env.action_space)
+    print(vec_env.action_space.n)
+    print(vec_env.observation_space)
+    print("========================================")
+
+    model = PPO(
+        "MlpPolicy",
+        vec_env,
+        learning_rate=3e-4,
+        n_steps=2048,
+        batch_size=64,
+        n_epochs=10,
+        gamma=0.99,
+        verbose=1
+    )
+
+    print("=================STARTING TRAINING=================")
+    model.learn(total_timesteps=100000)
+    model.save("ppo_pengym_nasim")
+    print("=================TRAINING COMPLETE=================")
+
+    # ===== EVALUATION PHASE =====
+    print("\n---------------------------------------")
+    print("Evaluation phase:")
+    print("---------------------------------------")
+
+    # obs = vec_env.reset()
+    eval_env = DummyVecEnv([make_env])
+    obs = eval_env.reset()
+
+    done = False # Indicate that execution is done
+    truncated = False # Indicate that execution is truncated
+    step_count = 0 # Count the number of execution steps
+    total_reward = 0 # Accumulate total reward
+
+    while not done and not truncated and step_count < MAX_STEPS:
+        # Predict action
+        action, _ = model.predict(obs, deterministic=True)
+        
+        # Get action object for readable output
+        action_idx = int(action[0])
+        action_obj = eval_env.get_attr('action_space')[0].get_action(action_idx)
+        
+        print(f"- Step {step_count + 1}: {action_obj}")
+        
+        # Execute action
+        obs, rewards, dones, infos = eval_env.step(action)
+        
+        step_count += 1
+        total_reward += rewards[0]
+        done = dones[0]
+        
+        # Check for truncation (TimeLimit wrapper)
+        if 'TimeLimit.truncated' in infos[0]:
+            truncated = infos[0]['TimeLimit.truncated']
+        
+        print(f"  Reward: {rewards[0]:.2f}, Cumulative: {total_reward:.2f}")
+        
+        # Break if episode ends
+        if done or truncated:
+            break
+
+    print(f"\nEvaluation complete:")
+    print(f"  - Steps: {step_count}")
+    print(f"  - Total reward: {total_reward:.2f}")
+    print(f"  - Goal reached: {done}")
+    print(f"  - Truncated: {truncated}")
+
+    return done, truncated, step_count
+
+#############################################################################
+# Run pentesting with a LGRL agent for the specific scenario in 'scenario_path'
+def run_lgrl_agent(scenario_path):
+    subgoal_manager = SubgoalManager()
+
+    def make_env():
+        env = create_pengym_custom_environment(scenario_path)
+        env = IntActionWrapper(env)
+        env = gym.wrappers.TimeLimit(env, max_episode_steps=100)
+
+        env = SubgoalUpdateWrapper(env, subgoal_manager)
+        env = SubgoalObsWrapper(env, subgoal_manager)
+        env = SubgoalRewardWrapper(env, subgoal_manager, lambda_=0.5)
+
         return Monitor(env)
 
     vec_env = DummyVecEnv([make_env])
@@ -496,7 +612,12 @@ def main(args):
     # Run experiment using a PPO agent
     elif agent_type == AGENT_TYPE_PPO:
         print("* Perform pentesting using a PPO agent...")
-        done, truncated, step_count = run_ppo_agent(env, scenario_path)
+        done, truncated, step_count = run_ppo_agent(scenario_path)
+    
+    # Run experiment using a LGRL agent
+    elif agent_type == AGENT_TYPE_LGRL:
+        print("* Perform pentesting using a LGRL agent...")
+        done, truncated, step_count = run_lgrl_agent(scenario_path)
 
     # Run experiment using a deterministic agent
     elif agent_type == AGENT_TYPE_DETERMINISTIC:
