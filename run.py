@@ -25,11 +25,14 @@ storyboard = Storyboard()
 
 class IntActionWrapper(gym.ActionWrapper):
     def action(self, action):
+        print(f"Original action: {action}")
         if isinstance(action, np.ndarray):
             if action.size == 1:
                 return int(action.item())
         if isinstance(action, np.integer):
             return int(action)
+        
+        print(f"Converted action: {action}")
         return action
 
 
@@ -58,6 +61,10 @@ def one_hot_subgoal(subgoal):
 # LGRL Subgoal Manager (dummy implementation that updates subgoal based on changes in state counts of known hosts/services/shells)
 class SubgoalManager:
     def __init__(self):
+        self.reset()
+
+    def reset(self):
+        "Reset subgoal manager at the beginning of each episode (current subgoal = DISCOVER_HOST, just_completed = False, prev_counts = 0 for all counts)"
         self.current_subgoal = "DISCOVER_HOST"
         self.just_completed = False
         self.prev_counts = {
@@ -68,14 +75,27 @@ class SubgoalManager:
         }
 
     # Update subgoal based on changes in state counts (e.g., if number of known hosts increases, move from DISCOVER_HOST to ENUM_SERVICE, etc.)
-    def update(self, state):
+    def update(self):
         self.just_completed = False
 
+        curr_hosts = len(utils.host_is_discovered())
+        curr_services = 0
+        curr_user_shells = 0
+        curr_root_shells = 0
+
+        for host_id, host_data in utils.host_map.items():
+            if host_data[storyboard.SERVICES] is not None:
+                curr_services += 1
+            if host_data[storyboard.SHELL] is not None:
+                curr_user_shells += 1
+            if host_data[storyboard.PE_SHELL] is not None:
+                curr_root_shells += 1
+
         counts = {
-            "hosts": state.get_num_known_hosts(), # Need to be changed
-            "services": state.get_num_known_services(), # Need to be changed
-            "user_shells": state.get_num_user_shells(), # Need to be changed
-            "root_shells": state.get_num_root_shells() # Need to be changed
+            "hosts": curr_hosts,
+            "services": curr_services,
+            "user_shells": curr_user_shells,
+            "root_shells": curr_root_shells
         }
 
         if self.current_subgoal == "DISCOVER_HOST":
@@ -141,12 +161,14 @@ class SubgoalUpdateWrapper(gym.Wrapper):
         super().__init__(env)
         self.subgoal_manager = subgoal_manager
 
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self.subgoal_manager.reset()
+        return obs, info
+
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
-
-        state = self.env.unwrapped.current_state
-        self.subgoal_manager.update(state)
-
+        self.subgoal_manager.update()
         return obs, reward, done, truncated, info
 
 #############################################################################
@@ -220,6 +242,7 @@ AGENT_TYPE_RANDOM = "random"
 AGENT_TYPE_DETERMINISTIC = "deterministic"
 AGENT_TYPE_PPO = "ppo"
 AGENT_TYPE_LGRL = "lgrl"
+CUSTOM_SCRIPT = "check"
 DEFAULT_AGENT_TYPE = AGENT_TYPE_DETERMINISTIC
 
 # Other constants
@@ -478,6 +501,26 @@ def run_lgrl_agent(scenario_path):
 
     return done, truncated, step_count
 
+#############################################################################
+# Run specific script to check PenGym environment setup'
+def run_check(scenario_path):
+    def make_env():
+        env = create_pengym_custom_environment(scenario_path)
+        env = IntActionWrapper(env)
+        env = gym.wrappers.TimeLimit(env, max_episode_steps=100)
+        return Monitor(env)
+
+    vec_env = DummyVecEnv([make_env])
+
+    print("========================================")
+    print("Action Space: ", vec_env.action_space)
+    print("Action Space Size: ", vec_env.action_space.n)
+    print("Observation Space: ", vec_env.observation_space)
+    print("Observation Space Shape: ", vec_env.observation_space.shape)
+    print("Observation SPace Low: ", vec_env.observation_space.low)
+    print("Observation Space High: ", vec_env.observation_space.high)
+    print("========================================")
+
 # Create PenGym environment using scenario 'scenario_name'
 def create_pengym_environment(scenario_name):
     env = pengym.create_environment(scenario_name)
@@ -618,6 +661,12 @@ def main(args):
     elif agent_type == AGENT_TYPE_LGRL:
         print("* Perform pentesting using a LGRL agent...")
         done, truncated, step_count = run_lgrl_agent(scenario_path)
+    
+    # Run a custom script to check environment setup
+    elif agent_type == CUSTOM_SCRIPT:
+        print("* Perform check using custom script...")
+        run_check(scenario_path)
+        exit(0)
 
     # Run experiment using a deterministic agent
     elif agent_type == AGENT_TYPE_DETERMINISTIC:
