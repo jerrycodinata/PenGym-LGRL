@@ -367,7 +367,7 @@ def run_ppo_agent(scenario_path):
     def make_env():
         env = create_pengym_custom_environment(scenario_path)
         env = IntActionWrapper(env)
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=100)
+        env = gym.wrappers.TimeLimit(env, max_episode_steps=30)
         return Monitor(env)
 
     vec_env = DummyVecEnv([make_env])
@@ -390,7 +390,7 @@ def run_ppo_agent(scenario_path):
     )
 
     print("=================STARTING TRAINING=================")
-    model.learn(total_timesteps=100000)
+    model.learn(total_timesteps=150000)
     model.save("ppo_pengym_nasim")
     print("=================TRAINING COMPLETE=================")
 
@@ -399,46 +399,32 @@ def run_ppo_agent(scenario_path):
     print("Evaluation phase:")
     print("---------------------------------------")
 
-    # obs = vec_env.reset()
-    eval_env = DummyVecEnv([make_env])
-    obs = eval_env.reset()
+    eval_env = make_env()
+    obs, info = eval_env.reset()
 
-    done = False # Indicate that execution is done
-    truncated = False # Indicate that execution is truncated
-    step_count = 0 # Count the number of execution steps
-    total_reward = 0 # Accumulate total reward
+    terminated = False
+    truncated = False
+    step_count = 0
+    total_reward = 0
 
-    while not done and not truncated and step_count < MAX_STEPS:
-        # Predict action
+    while not terminated and not truncated and step_count < MAX_STEPS:
         action, _ = model.predict(obs, deterministic=True)
-        
-        # Get action object for readable output
-        action_idx = int(action[0])
-        action_obj = eval_env.get_attr('action_space')[0].get_action(action_idx)
-        
+
+        action_idx = int(action) if not isinstance(action, np.ndarray) else int(action.item())
+        action_obj = eval_env.action_space.get_action(action_idx)
         print(f"- Step {step_count + 1}: {action_obj}")
         
-        # Execute action
-        obs, rewards, dones, infos = eval_env.step(action)
-        
+        obs, reward, terminated, truncated, info = eval_env.step(action)
         step_count += 1
-        total_reward += rewards[0]
-        done = dones[0]
-        
-        # Check for truncation (TimeLimit wrapper)
-        if 'TimeLimit.truncated' in infos[0]:
-            truncated = infos[0]['TimeLimit.truncated']
-        
-        print(f"  Reward: {rewards[0]:.2f}, Cumulative: {total_reward:.2f}")
-        
-        # Break if episode ends
-        if done or truncated:
-            break
+
+        total_reward += reward
+        print(f"  Reward: {reward:.2f}, Cumulative: {total_reward:.2f}")
+    
+    done = bool(terminated and not truncated)
 
     print(f"\nEvaluation complete:")
     print(f"  - Steps: {step_count}")
     print(f"  - Total reward: {total_reward:.2f}")
-    print(f"  - Goal reached: {done}")
     print(f"  - Truncated: {truncated}")
 
     return done, truncated, step_count
@@ -451,7 +437,7 @@ def run_lgrl_agent(scenario_path):
     def make_env():
         env = create_pengym_custom_environment(scenario_path)
         env = IntActionWrapper(env)
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=100)
+        env = gym.wrappers.TimeLimit(env, max_episode_steps=30)
 
         env = SubgoalUpdateWrapper(env, subgoal_manager)
         env = SubgoalObsWrapper(env, subgoal_manager)
@@ -479,7 +465,7 @@ def run_lgrl_agent(scenario_path):
     )
 
     print("=================STARTING TRAINING=================")
-    model.learn(total_timesteps=100000)
+    model.learn(total_timesteps=150000)
     model.save("ppo_pengym_nasim")
     print("=================TRAINING COMPLETE=================")
 
@@ -488,41 +474,28 @@ def run_lgrl_agent(scenario_path):
     print("Evaluation phase:")
     print("---------------------------------------")
 
-    # obs = vec_env.reset()
-    eval_env = DummyVecEnv([make_env])
-    obs = eval_env.reset()
+    eval_env = make_env()
+    obs, info = eval_env.reset()
 
-    done = False # Indicate that execution is done
-    truncated = False # Indicate that execution is truncated
-    step_count = 0 # Count the number of execution steps
-    total_reward = 0 # Accumulate total reward
+    terminated = False
+    truncated = False
+    step_count = 0
+    total_reward = 0
 
-    while not done and not truncated and step_count < MAX_STEPS:
-        # Predict action
+    while not terminated and not truncated and step_count < MAX_STEPS:
         action, _ = model.predict(obs, deterministic=True)
-        
-        # Get action object for readable output
-        action_idx = int(action[0])
-        action_obj = eval_env.get_attr('action_space')[0].get_action(action_idx)
-        
+
+        action_idx = int(action) if not isinstance(action, np.ndarray) else int(action.item())
+        action_obj = eval_env.action_space.get_action(action_idx)
         print(f"- Step {step_count + 1}: {action_obj}")
         
-        # Execute action
-        obs, rewards, dones, infos = eval_env.step(action)
-        
+        obs, reward, terminated, truncated, info = eval_env.step(action)
         step_count += 1
-        total_reward += rewards[0]
-        done = dones[0]
-        
-        # Check for truncation (TimeLimit wrapper)
-        if 'TimeLimit.truncated' in infos[0]:
-            truncated = infos[0]['TimeLimit.truncated']
-        
-        print(f"  Reward: {rewards[0]:.2f}, Cumulative: {total_reward:.2f}")
-        
-        # Break if episode ends
-        if done or truncated:
-            break
+
+        total_reward += reward
+        print(f"  Reward: {reward:.2f}, Cumulative: {total_reward:.2f}")
+
+    done = bool(terminated and not truncated)
 
     print(f"\nEvaluation complete:")
     print(f"  - Steps: {step_count}")
