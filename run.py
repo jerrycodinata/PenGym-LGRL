@@ -78,7 +78,7 @@ class SubgoalManager:
     def update(self):
         self.just_completed = False
 
-        curr_hosts = len(utils.host_is_discovered())
+        curr_hosts = len(utils.host_is_discovered)
         curr_services = 0
         curr_user_shells = 0
         curr_root_shells = 0
@@ -111,6 +111,14 @@ class SubgoalManager:
         elif self.current_subgoal == "EXPLOIT_ACCESS":
             if counts["user_shells"] > self.prev_counts["user_shells"]:
                 self.current_subgoal = "PRIV_ESC"
+                self.just_completed = True
+
+        elif self.current_subgoal == "PRIV_ESC":
+            if counts["root_shells"] > self.prev_counts["root_shells"]:
+                if counts["hosts"] > counts["services"]:
+                    self.current_subgoal = "ENUM_SERVICE"
+                else:
+                    self.current_subgoal = "DISCOVER_HOST"
                 self.just_completed = True
 
         self.prev_counts = counts
