@@ -16,6 +16,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 import gymnasium as gym
 import numpy as np
+from nasim.envs.utils import AccessLevel
 
 storyboard = Storyboard()
 
@@ -83,13 +84,34 @@ class SubgoalManager:
         curr_user_shells = 0
         curr_root_shells = 0
 
-        for host_id, host_data in utils.host_map.items():
-            if host_data[storyboard.SERVICES] is not None:
-                curr_services += 1
-            if host_data[storyboard.SHELL] is not None:
-                curr_user_shells += 1
-            if host_data[storyboard.PE_SHELL] is not None:
-                curr_root_shells += 1
+        if hasattr(utils, "current_state") and utils.current_state is not None:
+            state = utils.current_state
+
+            for host_addr in state.host_num_map.keys():
+                host_vec = state.get_host(host_addr)
+                
+                if host_vec.discovered:
+                    curr_hosts += 1
+                
+                if host_vec.access >= AccessLevel.USER:
+                    curr_user_shells += 1
+                
+                if host_vec.access >= AccessLevel.ROOT:
+                    curr_root_shells += 1
+            
+            curr_services = curr_hosts
+
+        elif hasattr(utils, "host_map"):
+            for host_id, host_data in utils.host_map.items():
+                if host_data[storyboard.SERVICES] is not None:
+                    curr_services += 1
+                if host_data[storyboard.SHELL] is not None:
+                    curr_user_shells += 1
+                if host_data[storyboard.PE_SHELL] is not None:
+                    curr_root_shells += 1
+
+            if hasattr(utils, "host_is_discovered"):
+                curr_hosts = len(utils.host_is_discovered)
 
         counts = {
             "hosts": curr_hosts,
@@ -125,6 +147,7 @@ class SubgoalManager:
 
     # Get the current subgoal
     def get(self):
+        print(f"Current subgoal: {self.current_subgoal}, Just completed: {self.just_completed}, Counts: {self.prev_counts}")
         return self.current_subgoal
 
 # LGRL Subgoal Wrapper that adds the current subgoal as a one-hot vector to the observation (obs = [original_obs, g_vec], where g_vec is the one-hot vector for the current subgoal)
