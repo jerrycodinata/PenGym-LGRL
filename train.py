@@ -20,6 +20,9 @@ DEFAULT_AGENT_TYPE = AGENT_TYPE_PPO
 
 # Other constants
 MAX_STEPS = 150 # Max number of pentesting steps (sys.maxsize to disable)
+TOTAL_EPISODES = 1000
+TOTAL_TIMESTEPS = MAX_STEPS * TOTAL_EPISODES
+FRAME_MEMORY = 4 # Number of frames to stack for PPO agent
 RENDER_OBS_STATE = False
 
 def run_agent(agent_type, scenario_path):
@@ -28,18 +31,12 @@ def run_agent(agent_type, scenario_path):
 
     if agent_type == AGENT_TYPE_LGRL:
         subgoal_manager = OracleSubgoalManager(utils=utils, storyboard=storyboard)
-        env_fn = lambda: make_env(scenario_path, llm_guidance=True, subgoal_manager=subgoal_manager, intrinsic_reward=True, intrinsic_reward_lambda=10)
+        env_fn = lambda: make_env(scenario_path, max_episode_steps=MAX_STEPS, llm_guidance=True, subgoal_manager=subgoal_manager, intrinsic_reward=True, intrinsic_reward_lambda=10)
     elif agent_type == AGENT_TYPE_PPO:
-        env_fn = lambda: make_env(scenario_path)
+        env_fn = lambda: make_env(scenario_path, max_episode_steps=MAX_STEPS)
 
     vec_env = DummyVecEnv([env_fn])
-    vec_env = VecFrameStack(vec_env, n_stack=4)
-
-    print("========================================")
-    print(vec_env.action_space)
-    print(vec_env.action_space.n)
-    print(vec_env.observation_space)
-    print("========================================")
+    vec_env = VecFrameStack(vec_env, n_stack=FRAME_MEMORY)
 
     model = MaskablePPO(
         "MlpPolicy",
@@ -53,7 +50,7 @@ def run_agent(agent_type, scenario_path):
     )
 
     print("=================STARTING TRAINING=================")
-    model.learn(total_timesteps=150000)
+    model.learn(total_timesteps=TOTAL_TIMESTEPS)
     model.save("ppo_pengym_nasim")
     print("=================TRAINING COMPLETE=================")
 
@@ -63,7 +60,7 @@ def run_agent(agent_type, scenario_path):
     print("---------------------------------------")
 
     eval_vec_env = DummyVecEnv([env_fn])
-    eval_vec_env = VecFrameStack(eval_vec_env, n_stack=4)
+    eval_vec_env = VecFrameStack(eval_vec_env, n_stack=FRAME_MEMORY)
 
     obs = eval_vec_env.reset()
 
@@ -86,6 +83,10 @@ def run_agent(agent_type, scenario_path):
         terminated = done[0]
         truncated = info[0].get('TimeLimit.truncated', False)
         step_count += 1
+
+        if RENDER_OBS_STATE:
+            base_env.render()
+            base_env.render_state()
 
         total_reward += reward[0]
         print(f"  Reward: {reward[0]:.2f}, Cumulative: {total_reward:.2f}")

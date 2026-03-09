@@ -13,7 +13,7 @@ host_virbr_addr: 192.168.122.1
 host_account: lab
 guest_basevm_config_file: /var/lib/libvirt/images/basevm_20.04.xml
 
-scenario_name: tiny
+scenario_name: medium-multi-site
 
 range_id: 44
 
