@@ -3,3 +3,4 @@ nasim
 python-nmap
 pymetasploit3
 stablebaselines3
+sb3_contrib

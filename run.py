@@ -12,11 +12,13 @@ import getopt
 import pengym.utilities as utils
 from pengym.storyboard import Storyboard
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 from stable_baselines3.common.monitor import Monitor
 import gymnasium as gym
 import numpy as np
 from nasim.envs.utils import AccessLevel
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.wrappers import ActionMasker
 
 storyboard = Storyboard()
 
@@ -36,6 +38,41 @@ class IntActionWrapper(gym.ActionWrapper):
         print(f"Converted action: {action}")
         return action
 
+#############################################################################
+# Custom action mask function for ActionMasker wrapper (returns a boolean mask of valid actions based on the current state of the environment)
+#############################################################################
+
+def custom_mask_fn(env: gym.Env) -> np.ndarray:
+    base_env = env.unwrapped
+    action_space = base_env.action_space
+
+    mask = np.zeros(action_space.n, dtype=bool)
+    state = base_env.current_state
+
+    for i in range(action_space.n):
+        action = action_space.get_action(i)
+        target = action.target
+
+        if target is None:
+            mask[i] = True
+            continue
+
+        if target not in state.host_num_map:
+            mask[i] = False
+            continue
+            
+        host_vec = state.get_host(target)
+
+        if 'pe_' in action.name:
+            mask[i] = host_vec.access >= AccessLevel.USER
+            continue
+                
+        mask[i] = host_vec.discovered
+
+    if not np.any(mask):
+        mask.fill(True)
+
+    return mask
 
 #############################################################################
 # LGRL Constants & Methods
@@ -148,97 +185,6 @@ class OracleSubgoalManager:
         self.prev_counts = counts
 
     def get(self):
-        return self.current_subgoal
-
-# LGRL Subgoal Manager (dummy implementation that updates subgoal based on changes in state counts of known hosts/services/shells)
-class SubgoalManager:
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        "Reset subgoal manager at the beginning of each episode (current subgoal = DISCOVER_HOST, just_completed = False, prev_counts = 0 for all counts)"
-        self.current_subgoal = "DISCOVER_HOST"
-        self.just_completed = False
-        self.prev_counts = {
-            "hosts": 0,
-            "services": 0,
-            "user_shells": 0,
-            "root_shells": 0
-        }
-
-    # Update subgoal based on changes in state counts (e.g., if number of known hosts increases, move from DISCOVER_HOST to ENUM_SERVICE, etc.)
-    def update(self):
-        self.just_completed = False
-
-        curr_hosts = len(utils.host_is_discovered)
-        curr_services = 0
-        curr_user_shells = 0
-        curr_root_shells = 0
-
-        if hasattr(utils, "current_state") and utils.current_state is not None:
-            state = utils.current_state
-
-            for host_addr in state.host_num_map.keys():
-                host_vec = state.get_host(host_addr)
-                
-                if host_vec.discovered:
-                    curr_hosts += 1
-                
-                if host_vec.access >= AccessLevel.USER:
-                    curr_user_shells += 1
-                
-                if host_vec.access >= AccessLevel.ROOT:
-                    curr_root_shells += 1
-            
-            curr_services = curr_hosts
-
-        elif hasattr(utils, "host_map"):
-            for host_id, host_data in utils.host_map.items():
-                if host_data[storyboard.SERVICES] is not None:
-                    curr_services += 1
-                if host_data[storyboard.SHELL] is not None:
-                    curr_user_shells += 1
-                if host_data[storyboard.PE_SHELL] is not None:
-                    curr_root_shells += 1
-
-            if hasattr(utils, "host_is_discovered"):
-                curr_hosts = len(utils.host_is_discovered)
-
-        counts = {
-            "hosts": curr_hosts,
-            "services": curr_services,
-            "user_shells": curr_user_shells,
-            "root_shells": curr_root_shells
-        }
-
-        if self.current_subgoal == "DISCOVER_HOST":
-            if counts["hosts"] > self.prev_counts["hosts"]:
-                self.current_subgoal = "ENUM_SERVICE"
-                self.just_completed = True
-
-        elif self.current_subgoal == "ENUM_SERVICE":
-            if counts["services"] > self.prev_counts["services"]:
-                self.current_subgoal = "EXPLOIT_ACCESS"
-                self.just_completed = True
-
-        elif self.current_subgoal == "EXPLOIT_ACCESS":
-            if counts["user_shells"] > self.prev_counts["user_shells"]:
-                self.current_subgoal = "PRIV_ESC"
-                self.just_completed = True
-
-        elif self.current_subgoal == "PRIV_ESC":
-            if counts["root_shells"] > self.prev_counts["root_shells"]:
-                if counts["hosts"] > counts["services"]:
-                    self.current_subgoal = "ENUM_SERVICE"
-                else:
-                    self.current_subgoal = "DISCOVER_HOST"
-                self.just_completed = True
-
-        self.prev_counts = counts
-
-    # Get the current subgoal
-    def get(self):
-        print(f"Current subgoal: {self.current_subgoal}, Just completed: {self.just_completed}, Counts: {self.prev_counts}")
         return self.current_subgoal
 
 # LGRL Subgoal Wrapper that adds the current subgoal as a one-hot vector to the observation (obs = [original_obs, g_vec], where g_vec is the one-hot vector for the current subgoal)
@@ -458,6 +404,9 @@ def run_ppo_agent(scenario_path):
     def make_env():
         env = create_pengym_custom_environment(scenario_path)
         env = IntActionWrapper(env)
+
+        env = ActionMasker(env, custom_mask_fn)
+
         env = gym.wrappers.TimeLimit(env, max_episode_steps=30)
         return Monitor(env)
 
@@ -469,7 +418,7 @@ def run_ppo_agent(scenario_path):
     print(vec_env.observation_space)
     print("========================================")
 
-    model = PPO(
+    model = MaskablePPO(
         "MlpPolicy",
         vec_env,
         learning_rate=3e-4,
@@ -481,7 +430,7 @@ def run_ppo_agent(scenario_path):
     )
 
     print("=================STARTING TRAINING=================")
-    model.learn(total_timesteps=150000)
+    model.learn(total_timesteps=120000)
     model.save("ppo_pengym_nasim")
     print("=================TRAINING COMPLETE=================")
 
@@ -490,8 +439,8 @@ def run_ppo_agent(scenario_path):
     print("Evaluation phase:")
     print("---------------------------------------")
 
-    eval_env = make_env()
-    obs, info = eval_env.reset()
+    eval_vec_env = DummyVecEnv([make_env])
+    obs = eval_vec_env.reset()
 
     terminated = False
     truncated = False
@@ -499,23 +448,30 @@ def run_ppo_agent(scenario_path):
     total_reward = 0
 
     while not terminated and not truncated and step_count < MAX_STEPS:
-        action, _ = model.predict(obs, deterministic=True)
+        action_masks = np.array([custom_mask_fn(eval_vec_env.envs[0])])
+        action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
 
-        action_idx = int(action) if not isinstance(action, np.ndarray) else int(action.item())
-        action_obj = eval_env.action_space.get_action(action_idx)
+        action_idx = int(action[0]) if isinstance(action, np.ndarray) else int(action)
+
+        base_env = eval_vec_env.envs[0].env.unwrapped
+        action_obj = base_env.action_space.get_action(action_idx)
         print(f"- Step {step_count + 1}: {action_obj}")
         
-        obs, reward, terminated, truncated, info = eval_env.step(action)
+        obs, reward, done, info = eval_vec_env.step(action)
         step_count += 1
 
-        total_reward += reward
-        print(f"  Reward: {reward:.2f}, Cumulative: {total_reward:.2f}")
+        terminated = done[0]
+        truncated = info[0].get('TimeLimit.truncated', False)
+
+        total_reward += reward[0]
+        print(f"  Reward: {reward[0]:.2f}, Cumulative: {total_reward:.2f}")
     
     done = bool(terminated and not truncated)
 
     print(f"\nEvaluation complete:")
     print(f"  - Steps: {step_count}")
     print(f"  - Total reward: {total_reward:.2f}")
+    print(f"  - Goal reached: {done}")
     print(f"  - Truncated: {truncated}")
 
     return done, truncated, step_count
@@ -523,21 +479,24 @@ def run_ppo_agent(scenario_path):
 #############################################################################
 # Run pentesting with a LGRL agent for the specific scenario in 'scenario_path'
 def run_lgrl_agent(scenario_path):
-    # subgoal_manager = SubgoalManager()
     subgoal_manager = OracleSubgoalManager()
 
     def make_env():
         env = create_pengym_custom_environment(scenario_path)
         env = IntActionWrapper(env)
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=30)
+
+        env = ActionMasker(env, custom_mask_fn)
+
+        env = gym.wrappers.TimeLimit(env, max_episode_steps=50)
 
         env = SubgoalUpdateWrapper(env, subgoal_manager)
         env = SubgoalObsWrapper(env, subgoal_manager)
-        env = SubgoalRewardWrapper(env, subgoal_manager, lambda_=0.5)
+        env = SubgoalRewardWrapper(env, subgoal_manager, lambda_=0)
 
         return Monitor(env)
 
     vec_env = DummyVecEnv([make_env])
+    vec_env = VecFrameStack(vec_env, n_stack=4)
 
     print("========================================")
     print(vec_env.action_space)
@@ -545,7 +504,7 @@ def run_lgrl_agent(scenario_path):
     print(vec_env.observation_space)
     print("========================================")
 
-    model = PPO(
+    model = MaskablePPO(
         "MlpPolicy",
         vec_env,
         learning_rate=3e-4,
@@ -566,8 +525,10 @@ def run_lgrl_agent(scenario_path):
     print("Evaluation phase:")
     print("---------------------------------------")
 
-    eval_env = make_env()
-    obs, info = eval_env.reset()
+    eval_vec_env = DummyVecEnv([make_env])
+    eval_vec_env = VecFrameStack(eval_vec_env, n_stack=4)
+
+    obs = eval_vec_env.reset()
 
     terminated = False
     truncated = False
@@ -575,17 +536,22 @@ def run_lgrl_agent(scenario_path):
     total_reward = 0
 
     while not terminated and not truncated and step_count < MAX_STEPS:
-        action, _ = model.predict(obs, deterministic=True)
+        action_masks = np.array([custom_mask_fn(eval_vec_env.envs[0])])
+        
+        action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
 
-        action_idx = int(action) if not isinstance(action, np.ndarray) else int(action.item())
-        action_obj = eval_env.action_space.get_action(action_idx)
+        base_env = eval_vec_env.envs[0].env.unwrapped 
+        action_idx = int(action[0]) if isinstance(action, np.ndarray) else int(action)
+        action_obj = base_env.action_space.get_action(action_idx)
         print(f"- Step {step_count + 1}: {action_obj}")
         
-        obs, reward, terminated, truncated, info = eval_env.step(action)
+        obs, reward, done, info = eval_vec_env.step(action)
+        terminated = done[0]
+        truncated = info[0].get('TimeLimit.truncated', False)
         step_count += 1
 
-        total_reward += reward
-        print(f"  Reward: {reward:.2f}, Cumulative: {total_reward:.2f}")
+        total_reward += reward[0]
+        print(f"  Reward: {reward[0]:.2f}, Cumulative: {total_reward:.2f}")
 
     done = bool(terminated and not truncated)
 
@@ -603,6 +569,7 @@ def run_check(scenario_path):
     def make_env():
         env = create_pengym_custom_environment(scenario_path)
         env = IntActionWrapper(env)
+
         env = gym.wrappers.TimeLimit(env, max_episode_steps=100)
         return Monitor(env)
 
@@ -611,9 +578,20 @@ def run_check(scenario_path):
     print("========================================")
     print("Action Space: ", vec_env.action_space)
     print("Action Space Size: ", vec_env.action_space.n)
+    print("Available Actions: ")
+
+    for i in range(0, vec_env.action_space.n):
+        action_name = vec_env.action_space.get_action(i).name
+        action_target = vec_env.action_space.get_action(i).target
+        print(f"  - Action {i}: {action_name} on target {action_target}\n")
+
+    print("Instance of Nasim Action Space: ", isinstance(vec_env, NASimEnv))
+    print("Type: ", type(vec_env))
+    print("Unwrapped Type: ", type(vec_env.unwrapped))
+
     print("Observation Space: ", vec_env.observation_space)
     print("Observation Space Shape: ", vec_env.observation_space.shape)
-    print("Observation SPace Low: ", vec_env.observation_space.low)
+    print("Observation Space Low: ", vec_env.observation_space.low)
     print("Observation Space High: ", vec_env.observation_space.high)
     print("========================================")
 
