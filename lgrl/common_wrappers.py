@@ -1,4 +1,5 @@
 import numpy as np
+import gymnasium as gym
 
 class IntActionWrapper(gym.ActionWrapper):
     def action(self, action):

@@ -186,7 +186,9 @@ def run_deterministic_agent(env, deterministic_path):
 #############################################################################
 # Run pentesting with a Vanilla PPO agent for the specific scenario in 'scenario_path'
 def run_ppo_agent(scenario_path):
-    vec_env = DummyVecEnv([make_env(scenario_path)])
+    env_fn = lambda: make_env(scenario_path)
+
+    vec_env = DummyVecEnv([env_fn])
     vec_env = VecFrameStack(vec_env, n_stack=4)
 
     print("========================================")
@@ -207,7 +209,7 @@ def run_ppo_agent(scenario_path):
     )
 
     print("=================STARTING TRAINING=================")
-    model.learn(total_timesteps=120000)
+    model.learn(total_timesteps=15000)
     model.save("ppo_pengym_nasim")
     print("=================TRAINING COMPLETE=================")
 
@@ -216,7 +218,8 @@ def run_ppo_agent(scenario_path):
     print("Evaluation phase:")
     print("---------------------------------------")
 
-    eval_vec_env = DummyVecEnv([make_env])
+    eval_vec_env = DummyVecEnv([env_fn])
+    eval_vec_env = VecFrameStack(eval_vec_env, n_stack=4)
     obs = eval_vec_env.reset()
 
     terminated = False
@@ -257,8 +260,9 @@ def run_ppo_agent(scenario_path):
 # Run pentesting with a LGRL agent for the specific scenario in 'scenario_path'
 def run_lgrl_agent(scenario_path):
     subgoal_manager = OracleSubgoalManager(utils=utils, storyboard=storyboard)
+    env_fn = lambda: make_env(scenario_path, llm_guidance=True, subgoal_manager=subgoal_manager, intrinsic_reward=True, intrinsic_reward_lambda=10)
 
-    vec_env = DummyVecEnv([make_env(scenario_path, llm_guidance=True, subgoal_manager=subgoal_manager, intrinsic_reward=True, intrinsic_reward_lambda=10)])
+    vec_env = DummyVecEnv([env_fn])
     vec_env = VecFrameStack(vec_env, n_stack=4)
 
     print("========================================")
@@ -288,7 +292,7 @@ def run_lgrl_agent(scenario_path):
     print("Evaluation phase:")
     print("---------------------------------------")
 
-    eval_vec_env = DummyVecEnv([make_env])
+    eval_vec_env = DummyVecEnv([env_fn])
     eval_vec_env = VecFrameStack(eval_vec_env, n_stack=4)
 
     obs = eval_vec_env.reset()
