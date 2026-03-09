@@ -11,7 +11,6 @@ import sys
 import getopt
 import pengym.utilities as utils
 from pengym.storyboard import Storyboard
-from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 from stable_baselines3.common.monitor import Monitor
 import gymnasium as gym
@@ -19,225 +18,11 @@ import numpy as np
 from nasim.envs.utils import AccessLevel
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
+from lgrl.common_utilities import make_env
+from lgrl.subgoal_managers import OracleSubgoalManager
+from lgrl.action_mask import custom_mask_fn
 
 storyboard = Storyboard()
-
-#############################################################################
-# Wrappers
-#############################################################################
-
-class IntActionWrapper(gym.ActionWrapper):
-    def action(self, action):
-        print(f"Original action: {action}")
-        if isinstance(action, np.ndarray):
-            if action.size == 1:
-                return int(action.item())
-        if isinstance(action, np.integer):
-            return int(action)
-        
-        print(f"Converted action: {action}")
-        return action
-
-#############################################################################
-# Custom action mask function for ActionMasker wrapper (returns a boolean mask of valid actions based on the current state of the environment)
-#############################################################################
-
-def custom_mask_fn(env: gym.Env) -> np.ndarray:
-    base_env = env.unwrapped
-    action_space = base_env.action_space
-
-    mask = np.zeros(action_space.n, dtype=bool)
-    state = base_env.current_state
-
-    for i in range(action_space.n):
-        action = action_space.get_action(i)
-        target = action.target
-
-        if target is None:
-            mask[i] = True
-            continue
-
-        if target not in state.host_num_map:
-            mask[i] = False
-            continue
-            
-        host_vec = state.get_host(target)
-
-        if 'pe_' in action.name:
-            mask[i] = host_vec.access >= AccessLevel.USER
-            continue
-                
-        mask[i] = host_vec.discovered
-
-    if not np.any(mask):
-        mask.fill(True)
-
-    return mask
-
-#############################################################################
-# LGRL Constants & Methods
-#############################################################################
-
-# Define subgoals and mapping to indices (SUBGOAL_TO_IDX = {"DISCOVER_HOST": 0, "ENUM_SERVICE": 1, "EXPLOIT_ACCESS": 2, "PRIV_ESC": 3})
-SUBGOALS = [
-    "DISCOVER_HOST",
-    "ENUM_SERVICE",
-    "EXPLOIT_ACCESS",
-    "PRIV_ESC"
-]
-
-SUBGOAL_TO_IDX = {g: i for i, g in enumerate(SUBGOALS)}
-NUM_SUBGOALS = len(SUBGOALS)
-
-# Function to convert subgoal name to one-hot vector (vec = DISCOVER_HOST -> [1, 0, 0, 0], ENUM_SERVICE -> [0, 1, 0, 0], etc.)
-def one_hot_subgoal(subgoal):
-    vec = np.zeros(NUM_SUBGOALS, dtype=np.float32)
-    vec[SUBGOAL_TO_IDX[subgoal]] = 1.0
-    return vec
-
-# Oracle Subgoal Manager
-class OracleSubgoalManager:
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        # The agent starts the episode needing to exploit the initially visible host
-        self.current_subgoal = "EXPLOIT_ACCESS" 
-        self.just_completed = False
-        self.prev_counts = {
-            "hosts": 0,
-            "user_shells": 0,
-            "root_shells": 0
-        }
-
-    def update(self):
-        self.just_completed = False
-
-        curr_hosts = 0
-        curr_user_shells = 0
-        curr_root_shells = 0
-
-        # --- Count Extraction ---
-        if hasattr(utils, "current_state") and utils.current_state is not None:
-            state = utils.current_state
-            for host_addr in state.host_num_map.keys():
-                host_vec = state.get_host(host_addr)
-                if host_vec.discovered:
-                    curr_hosts += 1
-                if host_vec.access >= AccessLevel.USER:
-                    curr_user_shells += 1
-                if host_vec.access >= AccessLevel.ROOT:
-                    curr_root_shells += 1
-                    
-        elif hasattr(utils, "host_map"):
-            for host_id, host_data in utils.host_map.items():
-                if host_data.get(storyboard.SHELL) is not None:
-                    curr_user_shells += 1
-                if host_data.get(storyboard.PE_SHELL):
-                    curr_root_shells += 1
-            if hasattr(utils, "host_is_discovered"):
-                curr_hosts = len(utils.host_is_discovered)
-
-        # Initialize base counts on the very first step of the episode
-        if self.prev_counts["hosts"] == 0:
-            self.prev_counts["hosts"] = curr_hosts
-            self.prev_counts["user_shells"] = curr_user_shells
-            self.prev_counts["root_shells"] = curr_root_shells
-            return
-
-        counts = {
-            "hosts": curr_hosts,
-            "user_shells": curr_user_shells,
-            "root_shells": curr_root_shells
-        }
-
-        # --- ORACLE STATE MACHINE FOR MEDIUM-MULTI-SITE ---
-        if self.current_subgoal == "EXPLOIT_ACCESS":
-            if counts["user_shells"] > self.prev_counts["user_shells"]:
-                self.just_completed = True
-                
-                # Logic mapped to optimal path:
-                # 1st Shell on (6,1) -> Next step is Subnet Scan
-                # 2nd Shell on (2,1) -> Next step is Subnet Scan
-                if counts["user_shells"] in [1, 2]:
-                    self.current_subgoal = "DISCOVER_HOST"
-                
-                # 3rd Shell on (3,1) -> Next step is another Exploit on (3,4)
-                elif counts["user_shells"] == 3:
-                    self.current_subgoal = "EXPLOIT_ACCESS"
-                
-                # 4th Shell on (3,4) -> Time to Priv Esc
-                elif counts["user_shells"] >= 4:
-                    self.current_subgoal = "PRIV_ESC"
-
-        elif self.current_subgoal == "DISCOVER_HOST":
-            if counts["hosts"] > self.prev_counts["hosts"]:
-                self.just_completed = True
-                # After discovering a subnet, the optimal path always exploits immediately
-                self.current_subgoal = "EXPLOIT_ACCESS"
-
-        elif self.current_subgoal == "PRIV_ESC":
-            if counts["root_shells"] > self.prev_counts["root_shells"]:
-                self.just_completed = True
-                # Path is complete. Keep rewarding if it somehow finds more, or hold state.
-                self.current_subgoal = "PRIV_ESC"
-
-        self.prev_counts = counts
-
-    def get(self):
-        return self.current_subgoal
-
-# LGRL Subgoal Wrapper that adds the current subgoal as a one-hot vector to the observation (obs = [original_obs, g_vec], where g_vec is the one-hot vector for the current subgoal)
-class SubgoalObsWrapper(gym.ObservationWrapper):
-    def __init__(self, env, subgoal_manager):
-        super().__init__(env)
-        self.subgoal_manager = subgoal_manager
-
-        # Dimension of the original observation space (e.g., if original obs is a vector of length 10, obs_dim = 10)
-        obs_dim = env.observation_space.shape[0]
-
-        # Create a new Box with low=0, high=100, and shape=(obs_dim + NUM_SUBGOALS,) to accommodate the original observation and the one-hot subgoal vector
-        # The low and high values can be adjusted based on the expected range of the original observations; here we use 0 and 100 as placeholders
-        self.observation_space = gym.spaces.Box(
-            low=0,
-            high=100,
-            shape=(obs_dim + NUM_SUBGOALS,),
-            dtype=np.float32
-        )
-
-    # Update subgoal manager based on the new state after each action and then return the augmented observation
-    def observation(self, obs):
-        g = self.subgoal_manager.get()
-        g_vec = one_hot_subgoal(g)
-        return np.concatenate([obs.astype(np.float32), g_vec])
-    
-# LGRL Reward Wrapper that adds an intrinsic reward (lambda_) when a subgoal is just completed (i.e., when the subgoal manager indicates that the current subgoal was just completed)
-class SubgoalRewardWrapper(gym.RewardWrapper):
-    def __init__(self, env, subgoal_manager, lambda_=0.5):
-        super().__init__(env)
-        self.subgoal_manager = subgoal_manager
-        self.lambda_ = lambda_
-
-    def reward(self, reward):
-        if self.subgoal_manager.just_completed:
-            return reward + self.lambda_
-        return reward
-
-# LGRL Subgoal Update Wrapper that updates the subgoal manager after each action (i.e., after each step, it calls subgoal_manager.update(state) to check if the subgoal should be updated based on the new state)
-class SubgoalUpdateWrapper(gym.Wrapper):
-    def __init__(self, env, subgoal_manager):
-        super().__init__(env)
-        self.subgoal_manager = subgoal_manager
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        self.subgoal_manager.reset()
-        return obs, info
-
-    def step(self, action):
-        obs, reward, done, truncated, info = self.env.step(action)
-        self.subgoal_manager.update()
-        return obs, reward, done, truncated, info
 
 #############################################################################
 # Deterministic Constants
@@ -401,16 +186,8 @@ def run_deterministic_agent(env, deterministic_path):
 #############################################################################
 # Run pentesting with a Vanilla PPO agent for the specific scenario in 'scenario_path'
 def run_ppo_agent(scenario_path):
-    def make_env():
-        env = create_pengym_custom_environment(scenario_path)
-        env = IntActionWrapper(env)
-
-        env = ActionMasker(env, custom_mask_fn)
-
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=30)
-        return Monitor(env)
-
-    vec_env = DummyVecEnv([make_env])
+    vec_env = DummyVecEnv([make_env(scenario_path)])
+    vec_env = VecFrameStack(vec_env, n_stack=4)
 
     print("========================================")
     print(vec_env.action_space)
@@ -479,23 +256,9 @@ def run_ppo_agent(scenario_path):
 #############################################################################
 # Run pentesting with a LGRL agent for the specific scenario in 'scenario_path'
 def run_lgrl_agent(scenario_path):
-    subgoal_manager = OracleSubgoalManager()
+    subgoal_manager = OracleSubgoalManager(utils=utils, storyboard=storyboard)
 
-    def make_env():
-        env = create_pengym_custom_environment(scenario_path)
-        env = IntActionWrapper(env)
-
-        env = ActionMasker(env, custom_mask_fn)
-
-        env = gym.wrappers.TimeLimit(env, max_episode_steps=50)
-
-        env = SubgoalUpdateWrapper(env, subgoal_manager)
-        env = SubgoalObsWrapper(env, subgoal_manager)
-        env = SubgoalRewardWrapper(env, subgoal_manager, lambda_=0)
-
-        return Monitor(env)
-
-    vec_env = DummyVecEnv([make_env])
+    vec_env = DummyVecEnv([make_env(scenario_path, llm_guidance=True, subgoal_manager=subgoal_manager, intrinsic_reward=True, intrinsic_reward_lambda=10)])
     vec_env = VecFrameStack(vec_env, n_stack=4)
 
     print("========================================")
