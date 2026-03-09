@@ -1,8 +1,10 @@
 import time
+from os.path import isfile
 import logging
 import sys
 import getopt
 import numpy as np
+from datetime import datetime
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 from sb3_contrib import MaskablePPO
 import pengym.utilities as utils
@@ -10,6 +12,7 @@ from pengym.storyboard import Storyboard
 from lgrl.subgoal_managers import OracleSubgoalManager
 from lgrl.common_utilities import make_env
 from lgrl.action_mask import custom_mask_fn
+from lgrl.evaluation import ConvergenceCallback
 
 storyboard = Storyboard()
 
@@ -20,39 +23,78 @@ DEFAULT_AGENT_TYPE = AGENT_TYPE_PPO
 
 # Other constants
 MAX_STEPS = 150 # Max number of pentesting steps (sys.maxsize to disable)
-TOTAL_EPISODES = 1000
+TOTAL_EPISODES = 500
+EVAL_EPISODES = 100
 TOTAL_TIMESTEPS = MAX_STEPS * TOTAL_EPISODES
 FRAME_MEMORY = 4 # Number of frames to stack for PPO agent
+WINDOW_SIZE = 5 # Number of episodes to consider for convergence calculation
+MARGIN = 2 # Margin of steps above ideal steps to consider as convergence
 RENDER_OBS_STATE = False
 
-def run_agent(agent_type, scenario_path):
+IDEAL_STEPS = {
+    "tiny": 6,
+    "tiny-small": 7,
+    "tiny-hard": 5,
+    "small-linear": 12,
+    "small-honeypot": 8,
+    "medium": 8,
+    "medium-single-site": 4,
+    "medium-multi-site": 7,
+}
+
+def run_agent(agent_type, scenario_path, model_path=None):
+    scenario_name = scenario_path.split("/")[-1].split(".")[0]
     subgoal_manager = None
     env_fn = None
+    model = None
+    convergence_speed = -1
 
     if agent_type == AGENT_TYPE_LGRL:
         subgoal_manager = OracleSubgoalManager(utils=utils, storyboard=storyboard)
-        env_fn = lambda: make_env(scenario_path, max_episode_steps=MAX_STEPS, llm_guidance=True, subgoal_manager=subgoal_manager, intrinsic_reward=True, intrinsic_reward_lambda=10)
+        env_fn = lambda: make_env(
+            scenario_path, 
+            max_episode_steps=MAX_STEPS, 
+            llm_guidance=True, 
+            subgoal_manager=subgoal_manager, 
+            intrinsic_reward=False, 
+            intrinsic_reward_lambda=10)
     elif agent_type == AGENT_TYPE_PPO:
-        env_fn = lambda: make_env(scenario_path, max_episode_steps=MAX_STEPS)
+        env_fn = lambda: make_env(
+            scenario_path, 
+            max_episode_steps=MAX_STEPS)
 
-    vec_env = DummyVecEnv([env_fn])
-    vec_env = VecFrameStack(vec_env, n_stack=FRAME_MEMORY)
+    if model_path is not None:
+        model = MaskablePPO.load(model_path)
+    else:
+        vec_env = DummyVecEnv([env_fn])
+        vec_env = VecFrameStack(vec_env, n_stack=FRAME_MEMORY)
 
-    model = MaskablePPO(
-        "MlpPolicy",
-        vec_env,
-        learning_rate=3e-4,
-        n_steps=2048,
-        batch_size=64,
-        n_epochs=10,
-        gamma=0.99,
-        verbose=1
-    )
+        model = MaskablePPO(
+            "MlpPolicy",
+            vec_env,
+            learning_rate=3e-4,
+            n_steps=2048,
+            batch_size=64,
+            n_epochs=10,
+            gamma=0.99,
+            verbose=1
+        )
 
-    print("=================STARTING TRAINING=================")
-    model.learn(total_timesteps=TOTAL_TIMESTEPS)
-    model.save("ppo_pengym_nasim")
-    print("=================TRAINING COMPLETE=================")
+        ideal_step = IDEAL_STEPS.get(scenario_name)
+        convergence_cb = ConvergenceCallback(ideal_steps=ideal_step, window_size=WINDOW_SIZE, margin=MARGIN)
+
+        print("=================STARTING TRAINING=================")
+        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=convergence_cb)
+
+        # Save Model
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        scenario_name = scenario_path.split("/")[-1].split(".")[0]
+        model_name = f"{agent_type}_{scenario_name}_({MAX_STEPS}_{TOTAL_EPISODES}ep)_{timestamp}"
+        model.save(f"models/{model_name}")
+
+        # Store CS metric for evaluation summary
+        convergence_speed = convergence_cb.convergence_timestep
+        print("=================TRAINING COMPLETE=================")
 
     # ===== EVALUATION PHASE =====
     print("\n---------------------------------------")
@@ -62,44 +104,70 @@ def run_agent(agent_type, scenario_path):
     eval_vec_env = DummyVecEnv([env_fn])
     eval_vec_env = VecFrameStack(eval_vec_env, n_stack=FRAME_MEMORY)
 
-    obs = eval_vec_env.reset()
+    success_count = 0
+    total_tokens_used = 0
+    total_cumulative_reward = 0
 
-    terminated = False
-    truncated = False
-    step_count = 0
-    total_reward = 0
+    for ep in range(EVAL_EPISODES):
+        print(f"\n=== Evaluation Episode {ep + 1}/{EVAL_EPISODES} ===")
 
-    while not terminated and not truncated and step_count < MAX_STEPS:
-        action_masks = np.array([custom_mask_fn(eval_vec_env.envs[0])])
-        
-        action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
+        obs = eval_vec_env.reset()
 
-        base_env = eval_vec_env.envs[0].env.unwrapped 
-        action_idx = int(action[0]) if isinstance(action, np.ndarray) else int(action)
-        action_obj = base_env.action_space.get_action(action_idx)
-        print(f"- Step {step_count + 1}: {action_obj}")
-        
-        obs, reward, done, info = eval_vec_env.step(action)
-        terminated = done[0]
-        truncated = info[0].get('TimeLimit.truncated', False)
-        step_count += 1
+        terminated = False
+        truncated = False
+        ep_steps = 0
+        ep_reward = 0
+        ep_token_usage = 0
 
-        if RENDER_OBS_STATE:
-            base_env.render()
-            base_env.render_state()
+        while not terminated and not truncated and ep_steps < MAX_STEPS:
+            action_masks = np.array([custom_mask_fn(eval_vec_env.envs[0])])
+            
+            action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
 
-        total_reward += reward[0]
-        print(f"  Reward: {reward[0]:.2f}, Cumulative: {total_reward:.2f}")
+            base_env = eval_vec_env.envs[0].env.unwrapped 
+            action_idx = int(action[0]) if isinstance(action, np.ndarray) else int(action)
+            action_obj = base_env.action_space.get_action(action_idx)
+            print(f"- Step {ep_steps + 1}: {action_obj}")
+            
+            obs, reward, done, info = eval_vec_env.step(action)
+            terminated = done[0]
+            truncated = info[0].get('TimeLimit.truncated', False)
+            ep_steps += 1
+            ep_reward += reward[0]
 
-    done = bool(terminated and not truncated)
+            if RENDER_OBS_STATE:
+                base_env.render()
+                base_env.render_state()
 
-    print(f"\nEvaluation complete:")
-    print(f"  - Steps: {step_count}")
-    print(f"  - Total reward: {total_reward:.2f}")
-    print(f"  - Goal reached: {done}")
-    print(f"  - Truncated: {truncated}")
+            print(f"  Reward: {reward[0]:.2f}, Cumulative: {ep_reward:.2f}")
 
-    return done, truncated, step_count
+        done = bool(terminated and not truncated)
+        success_count += 1 if done else 0
+        total_cumulative_reward += ep_reward
+        total_tokens_used += ep_token_usage
+
+        print(f"\nEvaluation {ep + 1}/{EVAL_EPISODES} complete:")
+        print(f"  - Steps: {ep_steps}")
+        print(f"  - Total reward: {ep_reward:.2f}")
+        print(f"  - Goal reached: {done}")
+        print(f"  - Truncated: {truncated}")
+    
+    # Final Metrics Calculation
+    success_rate = (success_count / EVAL_EPISODES) * 100
+    avg_cumulative_reward = total_cumulative_reward / EVAL_EPISODES
+    avg_tokens_used = total_tokens_used / EVAL_EPISODES
+
+    print("\n=======================================")
+    print("Evaluation Summary:")
+    print("=======================================")
+    print(f"Agent Type                 : {agent_type.upper()}")
+    print(f"Total Evaluation Episodes  : {EVAL_EPISODES}")
+    print(f"Convergence Speed          : {convergence_speed} timesteps") 
+    print(f"Success Rate               : {success_rate:.2f}%")
+    print(f"Average Cumulative Reward  : {avg_cumulative_reward:.2f}")
+    print(f"Average Tokens Used        : {avg_tokens_used:.2f}")
+
+    return done, truncated, ep_steps
 
 # Print usage information
 def usage():
@@ -108,6 +176,7 @@ def usage():
     print("OPTIONS:")
     print("-h, --help                     Display this help message and exit")
     print("-a, --agent_type <AGENT_TYPE>  Agent type (ppo/lgrl)")
+    print("-l, --load_model <MODEL_PATH>  Load a pre-trained model from the specified path")
     print("-d, --disable_pengym           Disable PenGym execution in cyber range")
     print("-n, --nasim_simulation         Enable NASim simulation execution")
 
@@ -128,12 +197,13 @@ def main(args):
     # Default argument values
     agent_type = DEFAULT_AGENT_TYPE
     config_path = None
+    model_path = None
 
     # Parse command line arguments
     try:
         # Make sure to add ':' for short-form and '=' for long-form options that require an argument
-        opts, trailing_args = getopt.getopt(args, "ha:dn",
-                                            ["help", "agent_type=", "disable_pengym", "nasim_simulation"])
+        opts, trailing_args = getopt.getopt(args, "ha:l:dn",
+                                            ["help", "agent_type=", "load_model=", "disable_pengym", "nasim_simulation"])
     except getopt.GetoptError as err:
         logging.error(f"Command-line argument error: {str(err)}")
         usage()
@@ -143,8 +213,10 @@ def main(args):
         if opt in ("-h", "--help"):
             usage()
             sys.exit()
-        elif opt in ("-a", "--agent"):
+        elif opt in ("-a", "--agent_type"):
             agent_type = arg
+        elif opt in ("-l", "--load_model"):
+            model_path = arg
         elif opt in ("-d", "--disable_pengym"):
             utils.ENABLE_PENGYM = False
         elif opt in ("-n", "--nasim_simulation"):
@@ -161,6 +233,15 @@ def main(args):
         logging.error(f"Configuration file is not specified")
         usage()
         sys.exit(2)
+    
+    if model_path is not None:
+        filename = model_path + ".zip"
+
+        if isfile(filename):
+            print(f"* Load pre-trained model from '{filename}'...")
+        else:
+            logging.error("Specified model path does not exist")
+            sys.exit(2)
 
     # Print parameters
     print(f"* Execution parameters:")
@@ -205,7 +286,12 @@ def main(args):
     # Run experiment using a PPO agent
     if agent_type == AGENT_TYPE_PPO:
         print("* Perform pentesting using a PPO agent...")
-        done, truncated, step_count = run_agent(AGENT_TYPE_PPO, scenario_path)
+        if model_path is not None:
+            print(f"* Load pre-trained model from '{model_path}.zip'...")
+            done, truncated, step_count = run_agent(AGENT_TYPE_PPO, scenario_path, model_path=model_path)
+        else:
+            print("* Training from scratch...")
+            done, truncated, step_count = run_agent(AGENT_TYPE_PPO, scenario_path)
     
     # Run experiment using a LGRL agent
     elif agent_type == AGENT_TYPE_LGRL:
