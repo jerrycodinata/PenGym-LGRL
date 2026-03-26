@@ -1,12 +1,11 @@
-
 #########################################
 # Global configuration values in PenGym
 #########################################
 
-pengym_source: home/pengym/PenGym-LGRL
+pengym_source: home/jerry/PenGym-LGRL
 
 # Should be the same as path in CyRIS CONFIG
-cyber_range_dir: home/lab/cyris-1.4/cyber_range
+cyber_range_dir: home/jerry/cyber_range
 
 host_mgmt_addr: 192.168.192.128
 host_virbr_addr: 192.168.122.1
@@ -37,7 +36,7 @@ additional_port:
 
 # File path information
 file_path:
-# General information
+  # General information
   scenario_file: /{pengym_source}/database/scenarios/{scenario_name}.yml
   cyris_description_file: /{pengym_source}/cyber_range/{scenario_name}
   range_details_file: /{cyber_range_dir}/{range_id}/range_details-cr{range_id}.yml
@@ -53,19 +52,19 @@ file_path:
 
   ## execute_program for cyber range creation
   ## The path should be the path in database souces
-  
-  # ftp 
+
+  # ftp
   ftp_folder: /database/resources/ftp/vsftpd-2.3.4
   ftp_prepare_pcks: /database/resources/ftp/prepare_pcks.sh
   ftp_config_file: /database/resources/ftp/config_vsftpd.sh
 
-  # http 
+  # http
   http_folder: /database/resources/http/httpd-2.4.49
   http_prepare_pcks: /database/resources/http/prepare_pcks.sh
   http_config_file: /database/resources/http/config_apache.sh
   http_start_file: /database/resources/http/start_apache.sh
 
-  # smtp 
+  # smtp
   smtp_folder: /database/resources/smtp/opensmtpd-6.6.1p1
   smtp_prepare_pcks: /database/resources/smtp/prepare_pcks.sh
   smtp_config_file: /database/resources/smtp/config_smtp.sh
@@ -77,7 +76,7 @@ file_path:
   samba_config_file: /database/resources/samba/config_samba.sh
   samba_start_file: /database/resources/samba/start_samba.sh
 
-  # proftpd 
+  # proftpd
   proftpd_folder: /database/resources/proftpd/proftpd-1.3.3
   proftpd_prepare_pcks: /database/resources/proftpd/prepare_pcks.sh
   proftpd_config_file: /database/resources/proftpd/config_proftpd.sh
@@ -92,7 +91,7 @@ file_path:
   tomcat_install: /database/resources/tomcat/install_tomcat.sh
 
   # Path for additional programs and firewalls
-  deactive_cron: /database/configuration_scripts/deactive_cron_service.sh 
+  deactive_cron: /database/configuration_scripts/deactive_cron_service.sh
   deactive_pe_tomcat: /database/configuration_scripts/deactive_pe_tomcat.sh
   firewall_rule_path: /cyber_range/{scenario_name}/firewall
   stop_ssh: /database/configuration_scripts/stop_ssh_service.sh
@@ -100,14 +99,13 @@ file_path:
 
 # Cyber range configuration
 cyber_range:
-
   # host setting
   host_settings:
     host_id: host_1
     mgmt_addr: localhost
     virbr_addr: host_virbr_addr
     account: host_account
-  
+
   # Guest_settings
   guest_settings:
     basevm_host: host_1
@@ -118,7 +116,7 @@ cyber_range:
     tasks:
       add_account:
         # Account, password and password file for the e_ssh action
-        ssh: 
+        ssh:
           account: test
           passwd: test1234
           pwd_file: e_ssh_pwd_file
@@ -130,69 +128,69 @@ cyber_range:
       execute_program:
         ftp:
           programs:
-          - program: ftp_prepare_pcks
-            interpreter: bash
+            - program: ftp_prepare_pcks
+              interpreter: bash
 
-          - program: ftp_config_file
-            args: [ftp_folder]
-            interpreter: bash
-            execute_time: after_clone
+            - program: ftp_config_file
+              args: [ftp_folder]
+              interpreter: bash
+              execute_time: after_clone
 
         http:
           programs:
-          - program: http_prepare_pcks
-            interpreter: bash
+            - program: http_prepare_pcks
+              interpreter: bash
 
-          - program: http_config_file
-            args: [http_folder]
-            interpreter: bash
-            execute_time: after_clone
+            - program: http_config_file
+              args: [http_folder]
+              interpreter: bash
+              execute_time: after_clone
 
-          - program: http_start_file
-            interpreter: bash
-            execute_time: after_clone
+            - program: http_start_file
+              interpreter: bash
+              execute_time: after_clone
 
         smtp:
           programs:
-          - program: smtp_prepare_pcks
-            interpreter: bash
+            - program: smtp_prepare_pcks
+              interpreter: bash
 
-          - program: smtp_config_file
-            args: [smtp_folder]
-            interpreter: bash
-            execute_time: after_clone
+            - program: smtp_config_file
+              args: [smtp_folder]
+              interpreter: bash
+              execute_time: after_clone
 
-          - program: smtp_start_file
-            interpreter: bash
-            execute_time: after_clone
+            - program: smtp_start_file
+              interpreter: bash
+              execute_time: after_clone
 
         samba:
           programs:
-          - program: samba_prepare_pcks
-            interpreter: bash
+            - program: samba_prepare_pcks
+              interpreter: bash
 
-          - program: samba_config_file
-            args: [samba_folder]
-            interpreter: bash
-            execute_time: after_clone
+            - program: samba_config_file
+              args: [samba_folder]
+              interpreter: bash
+              execute_time: after_clone
 
-          - program: samba_start_file
-            interpreter: bash
-            execute_time: after_clone
-        
+            - program: samba_start_file
+              interpreter: bash
+              execute_time: after_clone
+
         proftpd:
           programs:
-          - program: proftpd_prepare_pcks
-            interpreter: bash
+            - program: proftpd_prepare_pcks
+              interpreter: bash
 
-          - program: proftpd_config_file
-            args: [proftpd_folder]
-            interpreter: bash
-            execute_time: after_clone
+            - program: proftpd_config_file
+              args: [proftpd_folder]
+              interpreter: bash
+              execute_time: after_clone
 
-          - program: proftpd_start_file
-            interpreter: bash
-            execute_time: after_clone
+            - program: proftpd_start_file
+              interpreter: bash
+              execute_time: after_clone
 
         cron:
           programs:
@@ -218,12 +216,12 @@ cyber_range:
               execute_time: after_clone
 
         ## Use for machine that does not available for pe_tomcat action
-        deactive_pe_tomcat: 
+        deactive_pe_tomcat:
           programs:
             - program: deactive_pe_tomcat
               interpreter: bash
               execute_time: after_clone
-  
+
   # Clone Settings
   clone_settings:
     hosts:
