@@ -9,7 +9,8 @@ import pengym.utilities as utilities
 def create_environment(scenario_name,
                        fully_obs = False,
                        flat_actions = True,
-                       flat_obs = True):
+                       flat_obs = True,
+                       seed = None):
     """Create a new PenGym environment
 
     Args:
@@ -17,6 +18,7 @@ def create_environment(scenario_name,
         fully_obs (bool, optional): The observability mode of environment. True means fully observable mode, otherwise partially observable. Defaults to False.
         flat_actions (bool, optional): The action mode. True means a flat action space, otherwise a parameterised action space. Defaults to True.
         flat_obs (bool, optional): The observation space. True means a 1D observation space, otherwise a 2D observation space. Defaults to True.
+        seed (int, optional): Random seed for environment. Defaults to None.
     Returns:
         PenGymEnv: New PenGym environment instance
     """
@@ -27,7 +29,7 @@ def create_environment(scenario_name,
     }
 
     # Create new PenGym environment instance
-    utilities.scenario = make_benchmark_scenario(scenario_name)
+    utilities.scenario = make_benchmark_scenario(scenario_name, seed)
     env = PenGymEnv(utilities.scenario, **env_kwargs)
 
     if env:

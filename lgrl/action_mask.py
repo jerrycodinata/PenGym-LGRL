@@ -14,20 +14,22 @@ def custom_mask_fn(env: gym.Env) -> np.ndarray:
         action = action_space.get_action(i)
         target = action.target
 
-        if target is None:
-            mask[i] = True
-            continue
-
         if target not in state.host_num_map:
             mask[i] = False
             continue
             
         host_vec = state.get_host(target)
+        action_name = action.name.lower() if hasattr(action, "name") else ""
 
-        if 'pe_' in action.name:
+        # Subnet scans require a compromised host (USER+ access).
+        if "subnet_scan" in action_name:
             mask[i] = host_vec.access >= AccessLevel.USER
             continue
-                
+
+        if "pe_" in action_name:
+            mask[i] = host_vec.access >= AccessLevel.USER
+            continue
+
         mask[i] = host_vec.discovered
 
     if not np.any(mask):

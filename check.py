@@ -3,6 +3,7 @@ import logging
 import sys
 import getopt
 import numpy as np
+import math
 from collections import Counter
 import pengym
 import pengym.utilities as utils
@@ -26,6 +27,26 @@ def print_observation_details(env, observation):
     # last_obs keeps NASim Observation object regardless of flat_obs setting
     host_obs, aux_obs = env.last_obs.get_readable()
 
+    print("\nExpanded Observation (discrete vector):")
+    discrete_obs = [math.ceil(v) for v in flat_obs]
+
+    num_hosts = len(host_obs)
+    if num_hosts > 0:
+        obs_per_host = len(discrete_obs) // (num_hosts + 1)
+        for i in range(num_hosts):
+            host_start = i * obs_per_host
+            host_end = host_start + obs_per_host
+            print(f"  Host {i}: {discrete_obs[host_start:host_end]}")
+        
+        aux_end = len(discrete_obs)
+        aux_start = aux_end - obs_per_host
+        print(f"  Aux   : {discrete_obs[aux_start:aux_end]}")
+    else:
+        print(f"{discrete_obs}\n")
+
+    print("\nFlattened Observation:")
+    print(discrete_obs)
+
     print("\nExpanded Observation (decoded by host):")
     for host_index, host_data in enumerate(host_obs):
         print(f"  HostRow {host_index}: {host_data}")
@@ -43,24 +64,42 @@ def print_observation_details(env, observation):
 
 
 def print_action_details(env):
-    if not hasattr(env.action_space, "actions"):
-        return
+    action_space = env.action_space
+    actions = getattr(action_space, "actions", None)
 
-    actions = env.action_space.actions
-    action_types = Counter(action.__class__.__name__ for action in actions)
+    if actions is None and not hasattr(action_space, "get_action"):
+        return
 
     print("\nAction Space Details:")
     print("---------------------------------------")
-    print("Action Type Counts:")
-    for action_type, count in sorted(action_types.items()):
-        print(f"  - {action_type}: {count}")
 
-    print("\nAction Index Mapping:")
-    for index, action in enumerate(actions):
-        print(f"  [{index:02d}] {action}")
+    if actions is not None:
+        action_types = Counter(action.__class__.__name__ for action in actions)
+        print("Action Type Counts:")
+        for action_type, count in sorted(action_types.items()):
+            print(f"  - {action_type}: {count}")
+
+        print("\nAction Index Mapping:")
+        for index, action in enumerate(actions):
+            print(f"  [{index:02d}] {action}")
+
+    if hasattr(action_space, "n") and hasattr(action_space, "get_action"):
+        print("\nAction Space Used in Train/Test:")
+        for i in range(action_space.n):
+            action = action_space.get_action(i)
+            action_name = getattr(action, "name", None)
+            action_target = getattr(action, "target", None)
+            if action_name is not None and action_target is not None:
+                print(f"  - {i:02d}: {action_name} on target {action_target}")
+            else:
+                print(f"  - {i:02d}: {action}")
+    elif actions is None:
+        print("\nAction Space Used in Train/Test:")
+        print("  (unavailable: action_space.get_action missing)")
 
 def check_spaces(scenario_path):
-    env = pengym.load(scenario_path)
+    fully_obs = False
+    env = pengym.load(scenario_path, fully_obs=fully_obs)
     np.random.seed(1)
     env.action_space.seed(1)
     observation, _ = env.reset(seed=1)
@@ -70,6 +109,7 @@ def check_spaces(scenario_path):
     print("---------------------------------------")
     print(f"Observation Space: {env.observation_space}")
     print(f"Action Space     : {env.action_space}")
+    print(f"Fully Observable : {fully_obs}")
 
     if hasattr(env.observation_space, "shape"):
         print(f"Observation Shape: {env.observation_space.shape}")

@@ -7,6 +7,11 @@ from lgrl.common_wrappers import IntActionWrapper
 from lgrl.action_mask import custom_mask_fn
 from lgrl.subgoal_wrappers import SubgoalObsWrapper, SubgoalRewardWrapper, SubgoalUpdateWrapper
 
+def create_pengym_env(scenario_name, seed=None):
+    env = pengym.create_environment(scenario_name, seed=seed)
+
+    return env
+
 def create_pengym_custom_environment(scenario_path):
     env = pengym.load(scenario_path)
 
@@ -16,7 +21,22 @@ def create_pengym_custom_environment(scenario_path):
 
     return env
 
-def make_env(scenario_path, max_episode_steps=30, llm_guidance=False, subgoal_manager=None, intrinsic_reward=False, intrinsic_reward_lambda=0.5):
+def make_env(scenario_name, seed=None, max_episode_steps=30, llm_guidance=False, subgoal_manager=None, intrinsic_reward=False, intrinsic_reward_lambda=0.5):
+    env = create_pengym_env(scenario_name, seed)
+    env = IntActionWrapper(env)
+    env = ActionMasker(env, custom_mask_fn)
+    env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
+
+    if llm_guidance:
+        env = SubgoalUpdateWrapper(env, subgoal_manager)
+        env = SubgoalObsWrapper(env, subgoal_manager)
+
+        if intrinsic_reward:
+            env = SubgoalRewardWrapper(env, subgoal_manager, lambda_=intrinsic_reward_lambda)
+
+    return Monitor(env)
+
+def make_custom_env(scenario_path, max_episode_steps=30, llm_guidance=False, subgoal_manager=None, intrinsic_reward=False, intrinsic_reward_lambda=0.5):
     env = create_pengym_custom_environment(scenario_path)
     env = IntActionWrapper(env)
     env = ActionMasker(env, custom_mask_fn)
