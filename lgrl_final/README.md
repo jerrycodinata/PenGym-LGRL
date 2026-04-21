@@ -99,409 +99,353 @@ Dataclass that carries all run settings:
 
 ### `_build_parser()`
 
-Builds argparse CLI with:
+# lgrl_final Technical Documentation
+
+This README documents the full lgrl_final code path (training, evaluation, wrappers, subgoal logic, and translation utilities) based on the current implementation.
 
-1. Agent type.
-2. Mutually exclusive scenario selectors.
-3. Config/model/timestep/eval controls.
-4. Subgoal manager mode.
-5. Action masking toggle.
-6. Backend toggles.
-7. Save/output format options.
+## Scope
 
-### `main(argv=None)`
+This folder contains an object-oriented RL pipeline on top of PenGym/NASIM.
 
-1. Parses args.
-2. Parses seed lists.
-3. Warns if LLM manager selected without injected client from API.
-4. Builds `ExperimentConfig`.
-5. Runs `ExperimentRunner`.
-6. Prints summary.
-7. Returns process exit code.
+- Entry point and run orchestration: main.py
+- Training and evaluation orchestration: ppo_trainer.py
+- Environment construction and wrapper stacking: env_factory.py
+- Action masking policy: action_mask.py
+- Subgoal orchestration for LGRL: subgoal_manager.py
+- Gym wrappers for subgoal observation/reward/update: wrappers.py
+- Convergence callback: callbacks.py
+- Observation-to-text translator: observation_translator.py
+- Scenario metadata used by translator: scenario_specs.py
 
-## ppo_trainer.py
+## Architecture Overview
 
-Purpose: training/evaluation orchestration around MaskablePPO.
+The runtime path is:
 
-### `PPOTrainer.__init__(...)`
+1. Parse CLI args and build ExperimentConfig.
+2. Select backend defaults (PenGym or NASIM simulation) in ExperimentRunner.
+3. Build PPOTrainer.
+4. Build train environment factory from EnvFactory.
+5. Train MaskablePPO.
+6. Optionally save model.
+7. Build eval environments and run evaluation episodes.
+8. Emit summary metrics.
 
-1. Validates agent type.
-2. Stores hyperparameters and runtime options.
-3. Validates subgoal manager mode.
-4. Builds subgoal manager if agent type is LGRL:
+Core design details:
 
-- Deterministic manager.
-- LLM manager (with deterministic fallback behavior).
+- Two scenario modes are mutually exclusive:
+  - Dynamic/reseeded: scenario_name.
+  - Static/custom file: scenario_path.
+- Action masking is enabled by default and can be disabled for ablations.
+- LGRL behavior is fixed by trainer contract:
+  - Training uses deterministic subgoal manager.
+  - Evaluation uses LLM subgoal manager with deterministic fallback.
 
-5. Creates `EnvFactory` with masking mode.
+## CLI and Orchestration (main.py)
 
-### `_resolve_scenario_inputs(scenario_name, scenario_path, allow_fallback=False)`
+### ExperimentConfig
 
-1. Optionally falls back to stored scenario values.
-2. Enforces exactly one scenario selector.
-3. Returns tuple:
+ExperimentConfig stores all runtime options including:
 
-- `scenario_key` (name or stem of path)
-- resolved name
-- resolved path
+- Agent type (ppo or lgrl).
+- Scenario selector.
+- Seed lists for train/eval.
+- Training/evaluation limits.
+- Backend toggles (PenGym/NASIM).
+- Subgoal manager mode and action masking mode.
+- Optional llm_client and translator injection for Python API usage.
+
+### ExperimentRunner.\_configure_backends
 
-### `_build_model(vec_env)`
+Backend defaults are mode-aware:
 
-Creates and returns a `MaskablePPO` model with configured hyperparameters.
+- Dynamic mode (scenario_name) defaults to NASIM simulation on.
+- Static mode (scenario_path) defaults to PenGym on.
 
-### `load(model_path)`
+Then explicit overrides are applied via enable_pengym and enable_nasim.
 
-Loads model from disk into `self.model`.
+Validation rule:
 
-### `train(...)`
+- At least one backend must remain enabled.
 
-1. Resolves scenario mode.
-2. Stores scenario state in trainer.
-3. If `model_path` provided: loads model and returns.
-4. Gets env factory function from `EnvFactory`.
-5. Wraps in `DummyVecEnv` and `VecFrameStack`.
-6. Builds model.
-7. Creates `ConvergenceCallback` if ideal steps exist.
-8. Calls `model.learn(...)` with `use_masking` according to ablation toggle.
-9. Stores convergence speed if available.
-10. Returns model.
+When PenGym is enabled, it initializes CONFIG.yml and service-port mapping using pengym.utilities.
 
-### `evaluate(...)`
+### ExperimentRunner.run
 
-1. Ensures model exists.
-2. Resolves scenario mode.
-3. Picks seeds and episodes.
-4. For each seed:
+Run sequence:
 
-- Builds eval env.
-- Runs episode loop.
-- Chooses masked or unmasked `predict()` path.
-- Steps env and accumulates stats.
+1. trainer.train(...)
+2. Optional trainer.save(...)
+3. trainer.evaluate(...)
+4. Return model handle, model path, raw episode status, and metrics.
 
-5. Prints final summary metrics.
-6. Returns final `(done, truncated, ep_steps)` from last episode.
+### CLI arguments summary
 
-### `save(output_dir="models")`
+- Scenario selection (required, mutually exclusive):
+  - --scenario-name
+  - --scenario-path
+- Agent type:
+  - --agent-type {ppo,lgrl}
+- Optional training/eval controls:
+  - --total-timesteps
+  - --eval-episodes
+  - --train-seeds
+  - --eval-seeds
+- Optional model behavior:
+  - --model-path
+  - --no-save
+  - --model-output-dir
+- Optional backend/masking behavior:
+  - --disable-action-masking
+  - --disable-pengym
+  - --nasim-simulation
+- Output:
+  - --json
 
-1. Ensures model exists.
-2. Resolves scenario key for file naming.
-3. Creates timestamped model name.
-4. Saves model and returns path string.
+## Trainer Internals (ppo_trainer.py)
 
-## env_factory.py
+### Trainer responsibilities
 
-Purpose: build gym environments for training and evaluation.
+PPOTrainer handles:
 
-### `EnvFactory.__init__(...)`
+- Scenario input validation.
+- Train/eval environment creation.
+- MaskablePPO model construction/loading/saving.
+- Convergence and training metrics.
+- Evaluation metrics aggregation.
 
-Stores:
+### Subgoal manager wiring
 
-1. Agent mode.
-2. Subgoal manager.
-3. Episode length.
-4. Masking mode and function.
-5. Intrinsic reward options.
+- Agent type ppo:
+  - No subgoal manager in wrappers.
+- Agent type lgrl:
+  - train_subgoal_manager = DeterministicSubgoalManager
+  - eval_subgoal_manager = LLMSubgoalManager
+  - Separate EnvFactory instances are created for train and eval.
 
-### `create_pengym_env(scenario_name, seed=None)`
+This split is intentional and enforced by code.
 
-Creates generated scenario env via `pengym.create_environment`.
+### Training flow
 
-### `create_pengym_custom_environment(scenario_path)`
+train(...):
 
-Creates static/custom scenario env via `pengym.load`, and seeds numpy/action space.
+1. Resolve scenario_name/scenario_path.
+2. If model_path is provided, skip training and load model.
+3. Build train env factory using EnvFactory.build_train_env_factory(...).
+4. Wrap with DummyVecEnv and VecFrameStack.
+5. Build MaskablePPO with configured hyperparameters.
+6. Attach ConvergenceCallback using scenario-specific IDEAL_STEPS when available.
+7. Learn with use_masking flag matching current mode.
+8. Store convergence and return metrics.
 
-### `_build_env_kwargs()`
+### Evaluation flow
 
-Builds wrapper options (LGRL guidance and intrinsic reward options).
+evaluate(...):
 
-### `_apply_wrappers(env, ...)`
+1. Require an available model.
+2. Resolve scenario inputs (allowing fallback to stored train scenario).
+3. Determine seeds and episodes-per-seed.
+4. For each seed and episode:
+   - Build eval env.
+   - Reset and step until terminal/truncated/max_steps.
+   - Predict actions with or without action masks.
+   - Aggregate episode reward, steps, success, and LLM token usage.
+5. Compute aggregate metrics:
+   - success_rate
+   - average_steps
+   - average_cumulative_reward
+   - average_token_usage
 
-Applies wrappers in this order:
+Return value currently returns only the final episode tuple: (done, truncated, ep_steps). Full aggregates are stored in last_eval_metrics and printed.
 
-1. `IntActionWrapper`
-2. `TimeLimit`
-3. LGRL wrappers (optional):
+## Environment Factory and Wrapper Stack (env_factory.py, wrappers.py)
 
-- `SubgoalUpdateWrapper`
-- `SubgoalObsWrapper`
-- `SubgoalRewardWrapper` (optional)
+### Environment creation modes
 
-4. `Monitor`
-5. `ActionMasker` (optional; only if masking enabled)
+- create_pengym_env(scenario_name, seed): for dynamic generated scenarios.
+- create_pengym_custom_environment(scenario_path): for static custom scenario files.
 
-### `normalize_firewall_collections(env)`
+### Wrapper order (important)
 
-Converts firewall values to lists for compatibility with generated scenarios.
+Wrappers are applied in this order:
 
-### `build_env(scenario_name=None, scenario_path=None, seed=None)`
+1. IntActionWrapper
+2. TimeLimit
+3. If LGRL mode:
+   - SubgoalUpdateWrapper
+   - SubgoalObsWrapper
+   - SubgoalRewardWrapper (optional intrinsic reward)
+4. Monitor
+5. ActionMasker (if masking enabled)
 
-1. Enforces exactly one selector.
-2. Creates base env from name or path.
-3. Applies wrappers.
-4. Normalizes firewall collections.
-5. Returns final wrapped env.
+ActionMasker is intentionally outermost to keep action_masks discoverable through wrapper traversal in vectorized environments.
 
-### `make_eval_env(scenario_name, seed)`
+### Reseedable training environment
 
-Returns closure that builds dynamic eval env for a fixed seed.
+For dynamic training, make_env_reseedable(...) returns a custom nested env class that:
 
-### `make_static_env(scenario_path)`
+- Samples a random seed from a pool on init and each reset.
+- Rebuilds the full wrapped env each episode.
+- Exposes action_masks() and delegates attributes through get_wrapper_attr(...), preserving wrapper-chain compatibility.
 
-Returns closure that builds static env from path.
+## Action Masking Rules (action_mask.py)
 
-### `make_env_reseedable(scenario_name, seed_pool)`
+CustomActionMask.mask_fn(env) applies per-action validity checks:
 
-Returns nested `_ReseedableEnv` class:
+1. Reject actions with targets absent in host_num_map.
+2. subnet_scan actions require USER access on target host.
+3. pe\_ actions require USER access on target host.
+4. All other actions require discovered target host.
+5. If all actions become invalid, fallback to all-true mask to avoid invalid sampling state.
 
-1. Samples seed at init/reset.
-2. Rebuilds env each reset.
-3. Delegates step/render.
-4. Exposes `action_masks()` for vec env compatibility.
-5. If masking disabled, returns all-true mask.
-6. Delegates unknown attributes via `get_wrapper_attr`.
+## Subgoal Managers (subgoal_manager.py)
 
-### `build_train_env_factory(...)`
+### DeterministicSubgoalManager
 
-1. Enforces selector validity.
-2. Static path => static factory.
-3. Dynamic name => reseedable factory.
+Implements a state-machine style subgoal progression based on discovered hosts and shell counts.
 
-## wrappers.py
+- Reads either NASIM-like current_state or PenGym-style host_map structures.
+- Tracks previous counts across steps.
+- Sets just_completed when a subgoal transition condition is met.
 
-Purpose: reusable wrappers for action normalization and LGRL signals.
+### LLMSubgoalManager
 
-### `one_hot_subgoal(subgoal)`
+Wraps deterministic behavior and only queries the LLM at transition points:
 
-Converts subgoal string to fixed one-hot vector.
+1. Always update deterministic fallback first.
+2. If no transition happened, keep deterministic subgoal.
+3. If transition happened:
+   - Build constrained prompt from allowed subgoals.
+   - Optionally add translated observation context.
+   - Query llm_client if provided.
+   - Parse response to one valid subgoal token.
+4. If parsing/client fails, deterministic fallback subgoal is used.
 
-### `IntActionWrapper.action(action)`
+Supported llm_client interfaces:
 
-Normalizes single-element numpy actions into python ints.
+- Callable: llm_client(prompt)
+- Method: generate(prompt)
+- Method: complete(prompt)
+- Method: invoke(prompt)
 
-### `SubgoalObsWrapper.__init__(env, subgoal_manager)`
+Token accounting:
 
-Expands observation space by appending one-hot subgoal vector.
+- Attempts to read usage.total_tokens, or prompt_tokens + completion_tokens.
+- Accumulates per-episode token usage via get_episode_token_usage().
 
-### `SubgoalObsWrapper.observation(obs)`
+## Observation Translation (observation_translator.py, scenario_specs.py)
 
-Returns concatenated observation + current subgoal vector.
+ObservationTranslator converts a flat 1D observation vector into readable text.
 
-### `SubgoalRewardWrapper.__init__(env, subgoal_manager, lambda_=0.5)`
+Workflow:
 
-Stores manager and intrinsic reward weight.
+1. Load scenario spec from scenario_specs.py.
+2. Validate flat observation length against expected host-row layout.
+3. Decode per-host slices:
+   - subnet one-hot
+   - host one-hot
+   - compromised/reachable/discovered flags
+   - scalar value/discovery_value/access
+   - OS/service/process multi-hot blocks
+4. Produce a text report with host details and aggregate counts.
 
-### `SubgoalRewardWrapper.reward(reward)`
+Supported scenario names are defined in SCENARIO_SPECS.
 
-Adds intrinsic reward if manager reports recent completion.
+## Convergence Callback (callbacks.py)
 
-### `SubgoalUpdateWrapper.__init__(env, subgoal_manager)`
+ConvergenceCallback tracks episode return and convergence speed.
 
-Stores manager reference.
+Convergence condition:
 
-### `SubgoalUpdateWrapper.reset(**kwargs)`
+- For non-truncated episodes, compute rolling mean episode length over window_size.
+- If mean <= ideal_steps + margin for the first time, record convergence_timestep and convergence_episode.
 
-Resets subgoal manager and passes reset through.
+If ideal_steps is missing for a scenario, trainer prints a warning and disables convergence threshold detection for that run.
 
-### `SubgoalUpdateWrapper.step(action)`
+## Practical Usage
 
-Steps env, then updates manager state machine.
+### Dynamic scenario, PPO, masking enabled
 
-## action_mask.py
+```bash
+python -m lgrl_final.main \
+	--agent-type ppo \
+	--scenario-name tiny-gen
+```
 
-Purpose: implement action validity rules for masked PPO.
+### Dynamic scenario, PPO, masking disabled (ablation)
 
-### `CustomActionMask.mask_fn(env)`
+```bash
+python -m lgrl_final.main \
+	--agent-type ppo \
+	--scenario-name tiny-gen \
+	--disable-action-masking
+```
 
-1. Gets base env and current state.
-2. Iterates over action space.
-3. Invalidates actions targeting unknown hosts.
-4. Allows subnet scans and privilege escalation only with USER+ access.
-5. For other actions, requires discovered target host.
-6. If all false, forces all true to avoid invalid distribution.
+### Static scenario file
 
-## subgoal_manager.py
+```bash
+python -m lgrl_final.main \
+	--agent-type ppo \
+	--scenario-path database/scenarios/medium-multi-site.yml
+```
 
-Purpose: strategy objects for subgoal progression.
+### LGRL run with explicit seeds and JSON summary
 
-### Constants
+```bash
+python -m lgrl_final.main \
+	--agent-type lgrl \
+	--scenario-name tiny-gen \
+	--train-seeds 0,1,2,3 \
+	--eval-seeds 1000,1001 \
+	--json
+```
 
-1. `SUBGOALS`: ordered allowed goals.
-2. `SUBGOAL_TO_IDX`: one-hot mapping.
+## Python API Usage (for custom LLM client)
 
-### `BaseSubgoalManager`
+CLI currently does not inject a custom LLM client object. Use the Python API when you want real LLM-driven evaluation behavior.
 
-Abstract interface with:
+```python
+from lgrl_final.main import ExperimentConfig, ExperimentRunner
+from lgrl_final.ppo_trainer import PPOTrainer
+from lgrl_final.observation_translator import ObservationTranslator
 
-1. `reset()`
-2. `update()`
-3. `get()`
 
-### `DeterministicSubgoalManager.__init__(utils, storyboard)`
+class MyLLMClient:
+		def invoke(self, prompt: str):
+				# Return any object/string compatible with LLMSubgoalManager parsing.
+				return "EXPLOIT_ACCESS"
 
-Stores PenGym/NASIM state handles and initializes counters.
 
-### `DeterministicSubgoalManager.reset()`
+config = ExperimentConfig(
+		agent_type=PPOTrainer.AGENT_TYPE_LGRL,
+		scenario_name="tiny-gen",
+		llm_client=MyLLMClient(),
+		translator=ObservationTranslator(scenario="tiny-gen"),
+)
 
-Initializes subgoal and previous host/shell counters.
+result = ExperimentRunner(config).run()
+print(result["metrics"])
+```
 
-### `DeterministicSubgoalManager._extract_counts()`
+## Known Caveats
 
-Extracts counts from either:
+1. Scenario naming mismatch risk:
+   - IDEAL_STEPS keys include values like tiny, medium, etc.
+   - Generated scenario specs use keys like tiny-gen, medium-gen.
+   - If the resolved scenario key is not in IDEAL_STEPS, convergence threshold detection is disabled for that run.
+2. evaluate(...) returns only final episode status tuple; aggregate evaluation metrics are exposed via last_eval_metrics.
+3. Action mask fallback is intentionally permissive (all true) when no valid action is found, preventing invalid-action deadlocks at the cost of stricter filtering.
+4. LLM token usage depends on client response shape and may be zero if usage metadata is absent.
 
-1. live NASIM state (`current_state`), or
-2. PenGym host maps.
+## File-by-File Reference
 
-### `DeterministicSubgoalManager.update()`
-
-1. Updates transition flags.
-2. Applies deterministic state machine for next subgoal selection.
-3. Stores updated counters.
-
-### `LLMSubgoalManager.__init__(...)`
-
-Stores llm client and translator, and creates deterministic fallback manager.
-
-### `LLMSubgoalManager.reset()`
-
-Resets fallback and syncs current subgoal from fallback.
-
-### `LLMSubgoalManager._parse_subgoal(text)`
-
-Extracts first known subgoal token from model output.
-
-### `LLMSubgoalManager._build_prompt()`
-
-Builds constrained prompt with allowed subgoals and optional translated context.
-
-### `LLMSubgoalManager._query_llm(prompt)`
-
-Supports multiple client interfaces:
-
-1. callable
-2. `.generate`
-3. `.complete`
-4. `.invoke`
-
-Returns normalized text response.
-
-### `LLMSubgoalManager.update()`
-
-1. Always updates fallback first.
-2. If no transition occurred, keep fallback subgoal.
-3. If transition occurred, ask LLM and parse response.
-4. If parsing fails, fallback subgoal is used.
-
-## callbacks.py
-
-Purpose: convergence speed metric during training.
-
-### `ConvergenceCallback.__init__(ideal_steps, window_size=100, margin=2, verbose=0)`
-
-Stores threshold parameters and runtime counters.
-
-### `ConvergenceCallback._on_step()`
-
-1. Increments episode length counter.
-2. On episode end (non-truncated), appends length.
-3. Computes rolling mean of recent episodes.
-4. Marks first timestep where rolling mean <= `ideal_steps + margin`.
-5. Resets episode counter for next episode.
-
-## scenario_specs.py
-
-Purpose: static metadata for generated scenarios used by translator.
-
-### `SCENARIO_SPECS`
-
-Maps scenario name to dimensions and counts.
-
-### `get_scenario_spec(scenario_name)`
-
-Returns spec dictionary or raises clear error listing available scenarios.
-
-## observation_translator.py
-
-Purpose: convert flat numeric observation vectors into readable text.
-
-### `ObservationTranslator.__init__(observation=None, scenario=None)`
-
-Stores optional default observation and scenario.
-
-### `update(observation)`
-
-Replaces stored observation.
-
-### `get_detail(scenario=None)`
-
-Returns scenario metadata using `get_scenario_spec`.
-
-### `translate(observation=None, scenario=None)`
-
-1. Resolves observation and scenario.
-2. Validates inputs.
-3. Converts to float numpy vector.
-4. Validates 1D shape.
-5. Reshapes into host rows.
-6. Formats summary text.
-
-### `get_description()`
-
-Caches and returns current translation.
+- main.py: CLI parser, ExperimentConfig, ExperimentRunner.
+- ppo_trainer.py: PPOTrainer train/eval/load/save and metric bookkeeping.
+- env_factory.py: environment constructors, wrapper stack assembly, reseedable env.
+- wrappers.py: action normalization and subgoal wrappers.
+- action_mask.py: CustomActionMask validity logic.
+- subgoal_manager.py: deterministic and LLM-guided subgoal managers.
+- callbacks.py: convergence callback.
+- observation_translator.py: flat observation decoding to text.
+- scenario_specs.py: scenario metadata table.
 
 ### `_host_row_size(cfg)`
-
-Computes per-host row width from scenario spec.
-
-### `_reshape_flat_observation(flat_obs, cfg)`
-
-Validates total length and reshapes to `(hosts, row_size)`.
-
-### `_format_text(host_rows, cfg, scenario_name)`
-
-Builds multi-line report including host details and aggregate counts.
-
-### `_decode_host_row(row, cfg)`
-
-Decodes one host row into semantic fields (flags, values, one-hot slices).
-
-### `_decode_single_onehot(vec, prefix)`
-
-Turns one-hot slice into symbolic token.
-
-### `_decode_multi_hot(vec, prefix)`
-
-Turns multi-hot slice into comma-separated symbolic tokens.
-
-### `_access_to_label(access)`
-
-Maps numeric access to NONE/USER/ROOT label.
-
-## 4. Practical run examples
-
-### 4.1 Dynamic mode, masking on
-
-`python -m lgrl_final.main --agent-type ppo --scenario-name tiny-gen`
-
-### 4.2 Dynamic mode, masking off (ablation)
-
-`python -m lgrl_final.main --agent-type ppo --scenario-name tiny-gen --disable-action-masking`
-
-### 4.3 Static mode from scenario file
-
-`python -m lgrl_final.main --agent-type ppo --scenario-path database/scenarios/medium-multi-site.yml`
-
-### 4.4 LGRL deterministic manager
-
-`python -m lgrl_final.main --agent-type lgrl --scenario-name tiny-gen --subgoal-manager-type deterministic`
-
-### 4.5 LGRL LLM manager (CLI fallback note)
-
-`python -m lgrl_final.main --agent-type lgrl --scenario-name tiny-gen --subgoal-manager-type llm`
-
-Note: CLI currently does not inject a concrete LLM client object, so LLM manager behavior falls back unless using the Python API with `ExperimentConfig.llm_client`.
-
-## 5. Current caveats
-
-1. For generated dynamic scenarios, convergence warning can appear if scenario key is absent from `IDEAL_STEPS`.
-2. `MaskablePPO` still requires compatible installed sb3/sb3-contrib versions in your runtime environment.
-3. Evaluation returns the final episode status tuple plus printed aggregate metrics.

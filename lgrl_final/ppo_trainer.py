@@ -1,6 +1,6 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -85,7 +85,11 @@ class PPOTrainer:
         self.scenario_name: Optional[str] = None
         self.scenario_path: Optional[str] = None
         self.convergence_speed: int = -1
+        self.last_train_metrics: dict[str, Any] = {}
+        self.last_eval_metrics: dict[str, Any] = {}
         self.subgoal_manager_type = subgoal_manager_type
+        self.train_subgoal_manager = None
+        self.eval_subgoal_manager = None
 
         valid_manager_types = {
             self.SUBGOAL_MANAGER_DETERMINISTIC,
@@ -98,27 +102,42 @@ class PPOTrainer:
             )
 
         if self.agent_type == self.AGENT_TYPE_LGRL:
+            # LGRL pipeline contract:
+            # - training uses deterministic subgoal transitions
+            # - evaluation uses LLM-driven subgoal transitions
             if subgoal_manager is not None:
-                self.subgoal_manager = subgoal_manager
-            elif self.subgoal_manager_type == self.SUBGOAL_MANAGER_LLM:
-                self.subgoal_manager = LLMSubgoalManager(
-                    utils=utils,
-                    storyboard=self.storyboard,
-                    llm_client=llm_client,
-                    translator=translator,
-                )
+                self.train_subgoal_manager = subgoal_manager
             else:
-                self.subgoal_manager = DeterministicSubgoalManager(utils=utils, storyboard=self.storyboard)
-        else:
-            self.subgoal_manager = None
+                self.train_subgoal_manager = DeterministicSubgoalManager(utils=utils, storyboard=self.storyboard)
 
-        self.env_factory = EnvFactory(
+            self.eval_subgoal_manager = LLMSubgoalManager(
+                utils=utils,
+                storyboard=self.storyboard,
+                llm_client=llm_client,
+                translator=translator,
+            )
+        else:
+            self.train_subgoal_manager = None
+            self.eval_subgoal_manager = None
+
+        # Keep this alias for compatibility with any external callers.
+        self.subgoal_manager = self.train_subgoal_manager
+
+        self.train_env_factory = EnvFactory(
             agent_type=self.agent_type,
-            subgoal_manager=self.subgoal_manager,
+            subgoal_manager=self.train_subgoal_manager,
             max_steps=self.max_steps,
             action_mask_fn=self.action_mask_fn,
             enable_action_masking=self.use_action_masking,
         )
+        self.eval_env_factory = EnvFactory(
+            agent_type=self.agent_type,
+            subgoal_manager=self.eval_subgoal_manager,
+            max_steps=self.max_steps,
+            action_mask_fn=self.action_mask_fn,
+            enable_action_masking=self.use_action_masking,
+        )
+        self.env_factory = self.train_env_factory
 
     def _resolve_scenario_inputs(
         self,
@@ -184,9 +203,14 @@ class PPOTrainer:
         self.convergence_speed = -1
 
         if model_path is not None:
+            self.last_train_metrics = {
+                "average_return_over_training_steps": None,
+                "training_episodes_observed": 0,
+                "convergence_timestep": -1,
+            }
             return self.load(model_path)
 
-        env_fn = self.env_factory.build_train_env_factory(
+        env_fn = self.train_env_factory.build_train_env_factory(
             scenario_name=resolved_name,
             scenario_path=resolved_path,
             train_seeds=train_seeds,
@@ -197,30 +221,27 @@ class PPOTrainer:
         self.model = self._build_model(vec_env)
 
         ideal_step = self.IDEAL_STEPS.get(scenario_key)
-        convergence_cb = None
-        if ideal_step is not None:
-            convergence_cb = ConvergenceCallback(
-                ideal_steps=ideal_step,
-                window_size=self.window_size,
-                margin=self.margin,
-            )
-        else:
+        convergence_cb = ConvergenceCallback(
+            ideal_steps=ideal_step,
+            window_size=self.window_size,
+            margin=self.margin,
+        )
+        if ideal_step is None:
             print(f"* WARNING: No IDEAL_STEPS configured for scenario '{scenario_key}'. Convergence metric disabled.")
 
         print("=================STARTING TRAINING=================")
         target_timesteps = total_timesteps if total_timesteps is not None else self.max_steps * self.total_episodes
-        if convergence_cb is not None:
-            self.model.learn(
-                total_timesteps=target_timesteps,
-                callback=convergence_cb,
-                use_masking=self.use_action_masking,
-            )
-            self.convergence_speed = convergence_cb.convergence_timestep
-        else:
-            self.model.learn(
-                total_timesteps=target_timesteps,
-                use_masking=self.use_action_masking,
-            )
+        self.model.learn(
+            total_timesteps=target_timesteps,
+            callback=convergence_cb,
+            use_masking=self.use_action_masking,
+        )
+        self.convergence_speed = convergence_cb.convergence_timestep
+        self.last_train_metrics = {
+            "average_return_over_training_steps": convergence_cb.average_return,
+            "training_episodes_observed": convergence_cb.num_recorded_episodes,
+            "convergence_timestep": self.convergence_speed,
+        }
         print("=================TRAINING COMPLETE=================")
 
         return self.model
@@ -248,6 +269,7 @@ class PPOTrainer:
         print("---------------------------------------")
 
         success_count = 0
+        total_steps = 0
         total_tokens_used = 0
         total_cumulative_reward = 0.0
         done = False
@@ -256,9 +278,9 @@ class PPOTrainer:
 
         for seed in eval_seeds:
             if resolved_path is not None:
-                eval_env_fn = self.env_factory.make_static_env(resolved_path)
+                eval_env_fn = self.eval_env_factory.make_static_env(resolved_path)
             else:
-                eval_env_fn = self.env_factory.make_eval_env(resolved_name, seed)
+                eval_env_fn = self.eval_env_factory.make_eval_env(resolved_name, seed)
 
             eval_env = DummyVecEnv([eval_env_fn])
             eval_vec_env = VecFrameStack(eval_env, n_stack=self.frame_memory)
@@ -290,39 +312,56 @@ class PPOTrainer:
                     terminated = done_arr[0]
                     truncated = info[0].get("TimeLimit.truncated", False)
                     ep_steps += 1
-                    ep_reward += reward[0]
+                    ep_reward += float(reward[0])
 
                     if self.render_obs_state:
                         base_env.render()
                         base_env.render_state()
 
-                    print(f"  Reward: {reward[0]:.2f}, Cumulative: {ep_reward:.2f}")
+                    print(f"  Reward: {float(reward[0]):.2f}, Cumulative: {ep_reward:.2f}")
 
                 done = bool(terminated and not truncated)
                 success_count += 1 if done else 0
+                total_steps += ep_steps
                 total_cumulative_reward += ep_reward
+                if self.eval_subgoal_manager is not None and hasattr(self.eval_subgoal_manager, "get_episode_token_usage"):
+                    ep_token_usage = int(self.eval_subgoal_manager.get_episode_token_usage())
                 total_tokens_used += ep_token_usage
 
                 print(f"\nEvaluation {ep + 1}/{episodes_per_seed} complete:")
                 print(f"  - Steps: {ep_steps}")
                 print(f"  - Total reward: {ep_reward:.2f}")
+                print(f"  - Token usage: {ep_token_usage}")
                 print(f"  - Goal reached: {done}")
                 print(f"  - Truncated: {truncated}")
 
             eval_vec_env.close()
 
         total_eval_episodes = episodes_per_seed * len(eval_seeds)
-        success_rate = (success_count / total_eval_episodes) * 100
-        avg_cumulative_reward = total_cumulative_reward / total_eval_episodes
-        avg_tokens_used = total_tokens_used / total_eval_episodes
+        success_rate = float(success_count / total_eval_episodes)
+        success_rate_pct = float(success_rate * 100)
+        avg_steps = float(total_steps / total_eval_episodes)
+        avg_cumulative_reward = float(total_cumulative_reward / total_eval_episodes)
+        avg_tokens_used = float(total_tokens_used / total_eval_episodes)
+        avg_return_over_training_steps = self.last_train_metrics.get("average_return_over_training_steps")
+
+        self.last_eval_metrics = {
+            "success_rate": float(success_rate),
+            "success_rate_pct": float(success_rate_pct),
+            "average_steps": float(avg_steps),
+            "average_cumulative_reward": float(avg_cumulative_reward),
+            "average_token_usage": float(avg_tokens_used),
+        }
 
         print("\n=======================================")
         print("Evaluation Summary:")
         print("=======================================")
         print(f"Agent Type                 : {self.agent_type.upper()}")
         print(f"Total Evaluation Episodes  : {total_eval_episodes}")
-        print(f"Convergence Speed          : {self.convergence_speed} timesteps")
-        print(f"Success Rate               : {success_rate:.2f}%")
+        if avg_return_over_training_steps is not None:
+            print(f"Average Return Over Training Steps : {avg_return_over_training_steps:.2f}")
+        print(f"Success Rate               : {success_rate_pct:.2f}%")
+        print(f"Average Steps              : {avg_steps:.2f}")
         print(f"Average Cumulative Reward  : {avg_cumulative_reward:.2f}")
         print(f"Average Tokens Used        : {avg_tokens_used:.2f}")
 

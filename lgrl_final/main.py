@@ -92,12 +92,20 @@ class ExperimentRunner:
             seeds=self.config.eval_seeds,
         )
 
+        metrics = {
+            "success_rate": self.trainer.last_eval_metrics.get("success_rate"),
+            "average_steps": self.trainer.last_eval_metrics.get("average_steps"),
+            "average_return_over_training_steps": self.trainer.last_train_metrics.get("average_return_over_training_steps"),
+            "average_token_usage": self.trainer.last_eval_metrics.get("average_token_usage"),
+        }
+
         return {
             "model": model,
             "model_path": model_path,
             "done": done,
             "truncated": truncated,
             "steps": steps,
+            "metrics": metrics,
         }
 
 
@@ -180,7 +188,10 @@ def _build_parser() -> argparse.ArgumentParser:
             PPOTrainer.SUBGOAL_MANAGER_LLM,
         ],
         default=PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC,
-        help="Subgoal manager type (used when --agent-type lgrl).",
+        help=(
+            "Legacy compatibility option. LGRL pipeline now always uses deterministic "
+            "subgoal manager for training and LLM subgoal manager for evaluation."
+        ),
     )
     parser.add_argument(
         "--disable-action-masking",
@@ -226,8 +237,15 @@ def main(argv=None) -> int:
     except ValueError as err:
         parser.error(str(err))
 
-    if args.subgoal_manager_type == PPOTrainer.SUBGOAL_MANAGER_LLM:
-        print("* NOTE: CLI does not inject a custom llm_client yet. LLM manager will use fallback behavior unless configured in Python API.")
+    if args.agent_type == PPOTrainer.AGENT_TYPE_LGRL:
+        print(
+            "* NOTE: LGRL pipeline uses deterministic subgoal manager for training "
+            "and LLM subgoal manager for evaluation."
+        )
+        print(
+            "* NOTE: CLI does not inject a custom llm_client yet. LLM evaluation "
+            "will use fallback behavior unless configured in Python API."
+        )
 
     config = ExperimentConfig(
         agent_type=args.agent_type,
@@ -255,6 +273,7 @@ def main(argv=None) -> int:
         "truncated": result["truncated"],
         "steps": result["steps"],
         "use_action_masking": config.use_action_masking,
+        "metrics": result["metrics"],
     }
 
     if args.json:
@@ -266,6 +285,13 @@ def main(argv=None) -> int:
         print(f"  truncated: {summary['truncated']}")
         print(f"  steps: {summary['steps']}")
         print(f"  use_action_masking: {summary['use_action_masking']}")
+        print(f"  success_rate: {summary['metrics']['success_rate']}")
+        print(f"  average_steps: {summary['metrics']['average_steps']}")
+        print(
+            "  average_return_over_training_steps: "
+            f"{summary['metrics']['average_return_over_training_steps']}"
+        )
+        print(f"  average_token_usage: {summary['metrics']['average_token_usage']}")
 
     return 0
 

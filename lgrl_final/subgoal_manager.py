@@ -18,6 +18,7 @@ class BaseSubgoalManager(ABC):
     def __init__(self):
         self.current_subgoal = "EXPLOIT_ACCESS"
         self.just_completed = False
+        self.episode_token_usage = 0
 
     @abstractmethod
     def reset(self):
@@ -29,6 +30,16 @@ class BaseSubgoalManager(ABC):
 
     def get(self) -> str:
         return self.current_subgoal
+
+    def reset_token_usage(self):
+        self.episode_token_usage = 0
+
+    def get_episode_token_usage(self) -> int:
+        return int(self.episode_token_usage)
+
+    def _add_token_usage(self, token_count: int):
+        if token_count > 0:
+            self.episode_token_usage += int(token_count)
 
 
 class DeterministicSubgoalManager(BaseSubgoalManager):
@@ -42,6 +53,7 @@ class DeterministicSubgoalManager(BaseSubgoalManager):
     def reset(self):
         self.current_subgoal = "EXPLOIT_ACCESS"
         self.just_completed = False
+        self.reset_token_usage()
         self.prev_counts = {
             "hosts": 0,
             "user_shells": 0,
@@ -130,8 +142,40 @@ class LLMSubgoalManager(BaseSubgoalManager):
 
     def reset(self):
         self.fallback_manager.reset()
+        self.reset_token_usage()
         self.current_subgoal = self.fallback_manager.get()
         self.just_completed = False
+
+    @staticmethod
+    def _extract_token_usage(response: Any) -> int:
+        usage = None
+        if isinstance(response, dict):
+            usage = response.get("usage")
+        else:
+            usage = getattr(response, "usage", None)
+
+        total_tokens = None
+        if isinstance(usage, dict):
+            total_tokens = usage.get("total_tokens")
+            if total_tokens is None:
+                total_tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+        elif usage is not None:
+            total_tokens = getattr(usage, "total_tokens", None)
+            if total_tokens is None:
+                prompt_tokens = getattr(usage, "prompt_tokens", 0)
+                completion_tokens = getattr(usage, "completion_tokens", 0)
+                total_tokens = prompt_tokens + completion_tokens
+
+        if total_tokens is None and isinstance(response, dict):
+            total_tokens = response.get("total_tokens")
+
+        if total_tokens is None:
+            return 0
+
+        try:
+            return int(total_tokens)
+        except (TypeError, ValueError):
+            return 0
 
     def _parse_subgoal(self, text: str) -> Optional[str]:
         if not text:
@@ -177,6 +221,8 @@ class LLMSubgoalManager(BaseSubgoalManager):
 
         if response is None:
             return None
+
+        self._add_token_usage(self._extract_token_usage(response))
 
         if isinstance(response, str):
             return response
