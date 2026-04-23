@@ -95,7 +95,10 @@ class ExperimentRunner:
         metrics = {
             "success_rate": self.trainer.last_eval_metrics.get("success_rate"),
             "average_steps": self.trainer.last_eval_metrics.get("average_steps"),
+            "average_return_per_training_episodes": self.trainer.last_train_metrics.get("average_return_per_training_episodes"),
             "average_return_over_training_steps": self.trainer.last_train_metrics.get("average_return_over_training_steps"),
+            "convergence_timestep": self.trainer.last_train_metrics.get("convergence_timestep"),
+            "convergence_speed_over_training_steps": self.trainer.last_train_metrics.get("convergence_speed_over_training_steps"),
             "average_token_usage": self.trainer.last_eval_metrics.get("average_token_usage"),
         }
 
@@ -288,8 +291,17 @@ def main(argv=None) -> int:
         print(f"  success_rate: {summary['metrics']['success_rate']}")
         print(f"  average_steps: {summary['metrics']['average_steps']}")
         print(
+            "  average_return_per_training_episodes: "
+            f"{summary['metrics']['average_return_per_training_episodes']}"
+        )
+        print(
             "  average_return_over_training_steps: "
             f"{summary['metrics']['average_return_over_training_steps']}"
+        )
+        print(f"  convergence_timestep: {summary['metrics']['convergence_timestep']}")
+        print(
+            "  convergence_speed_over_training_steps: "
+            f"{summary['metrics']['convergence_speed_over_training_steps']}"
         )
         print(f"  average_token_usage: {summary['metrics']['average_token_usage']}")
 

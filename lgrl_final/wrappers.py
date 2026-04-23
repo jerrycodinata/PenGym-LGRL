@@ -60,12 +60,27 @@ class SubgoalUpdateWrapper(gym.Wrapper):
         super().__init__(env)
         self.subgoal_manager = subgoal_manager
 
+    def _sync_utils_state(self):
+        # Keep the global utils.current_state aligned with the env's current_state.
+        # Several subgoal managers read state via pengym.utilities.current_state.
+        try:
+            manager_utils = getattr(self.subgoal_manager, "utils", None)
+            base_env = getattr(self.env, "unwrapped", None)
+            current_state = getattr(base_env, "current_state", None)
+            if manager_utils is not None and current_state is not None:
+                manager_utils.current_state = current_state
+        except Exception:
+            # Best-effort only.
+            pass
+
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
+        self._sync_utils_state()
         self.subgoal_manager.reset()
         return obs, info
 
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
+        self._sync_utils_state()
         self.subgoal_manager.update()
         return obs, reward, done, truncated, info

@@ -24,17 +24,6 @@ class PPOTrainer:
     SUBGOAL_MANAGER_DETERMINISTIC = "deterministic"
     SUBGOAL_MANAGER_LLM = "llm"
 
-    IDEAL_STEPS = {
-        "tiny": 6,
-        "tiny-small": 7,
-        "tiny-hard": 5,
-        "small-linear": 12,
-        "small-honeypot": 8,
-        "medium": 8,
-        "medium-single-site": 4,
-        "medium-multi-site": 7,
-    }
-
     def __init__(
         self,
         agent_type: str = AGENT_TYPE_PPO,
@@ -47,7 +36,7 @@ class PPOTrainer:
         max_steps: int = 150,
         total_episodes: int = 100,
         eval_episodes: int = 100,
-        frame_memory: int = 4,
+        frame_memory: int = 1,
         window_size: int = 5,
         margin: int = 2,
         render_obs_state: bool = False,
@@ -204,9 +193,11 @@ class PPOTrainer:
 
         if model_path is not None:
             self.last_train_metrics = {
+                "average_return_per_training_episodes": None,
                 "average_return_over_training_steps": None,
                 "training_episodes_observed": 0,
                 "convergence_timestep": -1,
+                "convergence_speed_over_training_steps": -1.0,
             }
             return self.load(model_path)
 
@@ -220,14 +211,7 @@ class PPOTrainer:
 
         self.model = self._build_model(vec_env)
 
-        ideal_step = self.IDEAL_STEPS.get(scenario_key)
-        convergence_cb = ConvergenceCallback(
-            ideal_steps=ideal_step,
-            window_size=self.window_size,
-            margin=self.margin,
-        )
-        if ideal_step is None:
-            print(f"* WARNING: No IDEAL_STEPS configured for scenario '{scenario_key}'. Convergence metric disabled.")
+        convergence_cb = ConvergenceCallback()
 
         print("=================STARTING TRAINING=================")
         target_timesteps = total_timesteps if total_timesteps is not None else self.max_steps * self.total_episodes
@@ -236,11 +220,13 @@ class PPOTrainer:
             callback=convergence_cb,
             use_masking=self.use_action_masking,
         )
-        self.convergence_speed = convergence_cb.convergence_timestep
+        self.convergence_speed = convergence_cb.convergence_speed_over_training_steps
         self.last_train_metrics = {
-            "average_return_over_training_steps": convergence_cb.average_return,
+            "average_return_per_training_episodes": convergence_cb.average_return_per_training_episodes,
+            "average_return_over_training_steps": convergence_cb.average_return_over_training_steps,
             "training_episodes_observed": convergence_cb.num_recorded_episodes,
-            "convergence_timestep": self.convergence_speed,
+            "convergence_timestep": convergence_cb.convergence_timestep,
+            "convergence_speed_over_training_steps": convergence_cb.convergence_speed_over_training_steps,
         }
         print("=================TRAINING COMPLETE=================")
 
@@ -343,7 +329,10 @@ class PPOTrainer:
         avg_steps = float(total_steps / total_eval_episodes)
         avg_cumulative_reward = float(total_cumulative_reward / total_eval_episodes)
         avg_tokens_used = float(total_tokens_used / total_eval_episodes)
+        avg_return_per_training_episodes = self.last_train_metrics.get("average_return_per_training_episodes")
         avg_return_over_training_steps = self.last_train_metrics.get("average_return_over_training_steps")
+        convergence_timestep = self.last_train_metrics.get("convergence_timestep")
+        convergence_speed_over_training_steps = self.last_train_metrics.get("convergence_speed_over_training_steps")
 
         self.last_eval_metrics = {
             "success_rate": float(success_rate),
@@ -358,8 +347,14 @@ class PPOTrainer:
         print("=======================================")
         print(f"Agent Type                 : {self.agent_type.upper()}")
         print(f"Total Evaluation Episodes  : {total_eval_episodes}")
+        if avg_return_per_training_episodes is not None:
+            print(f"Average Return per Training Episodes : {avg_return_per_training_episodes:.2f}")
         if avg_return_over_training_steps is not None:
             print(f"Average Return Over Training Steps : {avg_return_over_training_steps:.2f}")
+        if convergence_timestep is not None and convergence_timestep >= 0:
+            print(f"Convergence Timestep       : {int(convergence_timestep)}")
+        if convergence_speed_over_training_steps is not None and convergence_speed_over_training_steps >= 0:
+            print(f"Convergence Speed (Steps Ratio) : {convergence_speed_over_training_steps:.4f}")
         print(f"Success Rate               : {success_rate_pct:.2f}%")
         print(f"Average Steps              : {avg_steps:.2f}")
         print(f"Average Cumulative Reward  : {avg_cumulative_reward:.2f}")
