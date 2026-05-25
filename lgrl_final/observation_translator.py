@@ -32,7 +32,12 @@ class ObservationTranslator:
             return "Scenario is not set for translation."
 
         cfg = get_scenario_spec(scenario_name)
-        arr = np.asarray(obs, dtype=np.float32)
+        if hasattr(obs, "numpy_flat") and callable(getattr(obs, "numpy_flat")):
+            arr = np.asarray(obs.numpy_flat(), dtype=np.float32)
+        elif hasattr(obs, "numpy") and callable(getattr(obs, "numpy")):
+            arr = np.asarray(obs.numpy(), dtype=np.float32).reshape(-1)
+        else:
+            arr = np.asarray(obs, dtype=np.float32)
 
         if arr.ndim != 1:
             return f"Unsupported observation shape: {arr.shape}"

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+import numpy as np
 from nasim.envs.utils import AccessLevel
 
 
@@ -131,12 +132,14 @@ class LLMSubgoalManager(BaseSubgoalManager):
         llm_client: Optional[Any] = None,
         translator: Optional[Any] = None,
         fallback_manager: Optional[DeterministicSubgoalManager] = None,
+        scenario_name: Optional[str] = None,
     ):
         super().__init__()
         self.utils = utils
         self.storyboard = storyboard
         self.llm_client = llm_client
         self.translator = translator
+        self.scenario_name = scenario_name
         self.fallback_manager = fallback_manager or DeterministicSubgoalManager(utils, storyboard)
         self.reset()
 
@@ -190,10 +193,14 @@ class LLMSubgoalManager(BaseSubgoalManager):
         context = ""
         if self.translator is not None:
             try:
-                if hasattr(self.utils, "current_state"):
-                    context = self.translator.translate(self.utils.current_state)
-                else:
-                    context = self.translator.translate()
+                state = getattr(self.utils, "current_state", None)
+                if state is not None:
+                    flat_state = self._state_to_flat_observation(state)
+                    if flat_state is not None:
+                        scenario_name = self.scenario_name or getattr(self.translator, "scenario", None)
+                        context = self.translator.translate(flat_state, scenario=scenario_name)
+                elif self.scenario_name is not None:
+                    context = self.translator.translate(scenario=self.scenario_name)
             except Exception:
                 context = ""
 
@@ -204,6 +211,17 @@ class LLMSubgoalManager(BaseSubgoalManager):
             + f"Current subgoal: {self.current_subgoal}\n"
             + (f"Context:\n{context}" if context else "")
         )
+
+    @staticmethod
+    def _state_to_flat_observation(state) -> Optional[np.ndarray]:
+        try:
+            if hasattr(state, "numpy_flat") and callable(getattr(state, "numpy_flat")):
+                return np.asarray(state.numpy_flat(), dtype=np.float32)
+            if hasattr(state, "numpy") and callable(getattr(state, "numpy")):
+                return np.asarray(state.numpy(), dtype=np.float32).reshape(-1)
+            return np.asarray(state, dtype=np.float32).reshape(-1)
+        except Exception:
+            return None
 
     def _query_llm(self, prompt: str) -> Optional[str]:
         if self.llm_client is None:

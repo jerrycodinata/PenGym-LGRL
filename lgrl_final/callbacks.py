@@ -9,15 +9,14 @@ class ConvergenceCallback(BaseCallback):
         ideal_steps: Optional[int] = None,
         window_size: int = 100,
         margin: int = 2,
+        reward_history_interval_steps: int = 1000,
         verbose: int = 0,
     ):
         super().__init__(verbose)
-        # The codebase used to compute convergence speed based on ideal episode
-        # length. That logic is no longer used, but we keep the constructor
-        # signature and attributes for compatibility.
         self.ideal_steps = ideal_steps
         self.window_size = window_size
         self.margin = margin
+        self.reward_history_interval_steps = reward_history_interval_steps
 
         self.convergence_timestep = -1
         self.convergence_episode = -1
@@ -26,9 +25,14 @@ class ConvergenceCallback(BaseCallback):
         self.episode_returns: list[float] = []
         self.episode_end_steps: list[int] = []
         self.rolling_average_returns: list[float] = []
+        self.reward_history: list[dict[str, float | int]] = []
         self.total_training_steps = 0
         self.current_ep_length = 0
         self.current_ep_return = 0.0
+        self.total_reward_sum = 0.0
+        self.total_reward_count = 0
+        self.current_reward_window_sum = 0.0
+        self.current_reward_window_count = 0
 
     @property
     def average_return_per_training_episodes(self) -> float:
@@ -38,9 +42,13 @@ class ConvergenceCallback(BaseCallback):
 
     @property
     def average_return_over_training_steps(self) -> float:
-        if not self.rolling_average_returns:
+        if self.total_reward_count <= 0:
             return 0.0
-        return float(self.rolling_average_returns[-1])
+        return float(self.total_reward_sum / self.total_reward_count)
+
+    @property
+    def average_reward_over_training_steps(self) -> float:
+        return self.average_return_over_training_steps
 
     @property
     def convergence_speed_over_training_steps(self) -> float:
@@ -52,21 +60,39 @@ class ConvergenceCallback(BaseCallback):
     def num_recorded_episodes(self) -> int:
         return len(self.episode_returns)
 
+    def _record_reward_history(self, force: bool = False):
+        if self.current_reward_window_count <= 0:
+            return
+
+        if not force and self.current_reward_window_count < self.reward_history_interval_steps:
+            return
+
+        mean_reward = self.current_reward_window_sum / self.current_reward_window_count
+        self.reward_history.append(
+            {
+                "training_step": int(self.total_training_steps),
+                "mean_reward": float(mean_reward),
+                "reward_sum": float(self.current_reward_window_sum),
+                "reward_count": int(self.current_reward_window_count),
+            }
+        )
+
+        self.current_reward_window_sum = 0.0
+        self.current_reward_window_count = 0
+
     def _update_convergence(self):
-        # Convergence is the first step where the step-indexed rolling average
-        # reaches 90% of its peak value.
         if self.convergence_timestep != -1:
             return
-        if len(self.rolling_average_returns) < 2:
+        if len(self.reward_history) < 2:
             return
 
-        peak_return = max(self.rolling_average_returns)
-        target_return = 0.9 * peak_return
+        peak_reward = max(entry["mean_reward"] for entry in self.reward_history)
+        target_reward = 0.9 * peak_reward
 
-        for idx, avg_return in enumerate(self.rolling_average_returns):
-            if avg_return >= target_return:
+        for idx, entry in enumerate(self.reward_history):
+            if entry["mean_reward"] >= target_reward:
                 self.convergence_episode = idx + 1
-                self.convergence_timestep = self.episode_end_steps[idx]
+                self.convergence_timestep = int(entry["training_step"])
                 return
 
     def _on_step(self) -> bool:
@@ -74,7 +100,12 @@ class ConvergenceCallback(BaseCallback):
         self.current_ep_length += 1
         rewards = self.locals.get("rewards")
         if rewards is not None:
-            self.current_ep_return += float(rewards[0])
+            step_reward = float(rewards[0])
+            self.current_ep_return += step_reward
+            self.total_reward_sum += step_reward
+            self.total_reward_count += 1
+            self.current_reward_window_sum += step_reward
+            self.current_reward_window_count += 1
 
         done = bool(self.locals["dones"][0])
         info = self.locals["infos"][0] if "infos" in self.locals else {}
@@ -91,7 +122,6 @@ class ConvergenceCallback(BaseCallback):
 
             window = self.episode_returns[-self.window_size :]
             self.rolling_average_returns.append(float(np.mean(window)))
-            self._update_convergence()
 
             if not truncated:
                 self.episode_lengths.append(self.current_ep_length)
@@ -99,4 +129,11 @@ class ConvergenceCallback(BaseCallback):
             self.current_ep_length = 0
             self.current_ep_return = 0.0
 
+        self._record_reward_history()
+        self._update_convergence()
+
         return True
+
+    def _on_training_end(self) -> None:
+        self._record_reward_history(force=True)
+        self._update_convergence()

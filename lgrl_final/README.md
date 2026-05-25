@@ -352,14 +352,20 @@ Supported scenario names are defined in SCENARIO_SPECS.
 
 ## Convergence Callback (callbacks.py)
 
-ConvergenceCallback tracks episode return and convergence speed.
+ConvergenceCallback tracks episode return, mean reward over training steps, reward history, and convergence speed.
 
 Convergence condition:
 
-- For non-truncated episodes, compute rolling mean episode length over window_size.
-- If mean <= ideal_steps + margin for the first time, record convergence_timestep and convergence_episode.
+- Reward history is recorded every 1000 training steps.
+- Each reward history point stores the mean reward for that 1000-step window.
+- Convergence is detected when the reward-history mean reaches 90% of its peak value for the first time.
 
-If ideal_steps is missing for a scenario, trainer prints a warning and disables convergence threshold detection for that run.
+Reward history artifacts:
+
+- A JSON file containing the recorded reward history.
+- A PNG plot for each run/configuration.
+
+The artifacts are saved by PPOTrainer and exposed in the run summary.
 
 ## Practical Usage
 
@@ -429,10 +435,11 @@ print(result["metrics"])
 ## Known Caveats
 
 1. Scenario naming mismatch risk:
-   - IDEAL_STEPS keys include values like tiny, medium, etc.
-   - Generated scenario specs use keys like tiny-gen, medium-gen.
-   - If the resolved scenario key is not in IDEAL_STEPS, convergence threshold detection is disabled for that run.
-2. evaluate(...) returns only final episode status tuple; aggregate evaluation metrics are exposed via last_eval_metrics.
+
+- Generated scenario specs use keys like tiny-gen and medium-gen.
+- Reward-history convergence does not depend on a fixed ideal episode length, so generated scenarios are supported directly.
+
+2. evaluate(...) returns a structured result dictionary; aggregate evaluation metrics are exposed via last_eval_metrics.
 3. Action mask fallback is intentionally permissive (all true) when no valid action is found, preventing invalid-action deadlocks at the cost of stricter filtering.
 4. LLM token usage depends on client response shape and may be zero if usage metadata is absent.
 

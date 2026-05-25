@@ -5,10 +5,10 @@ Runs 6 experimental configurations across randomized training seeds.
 Configurations:
 1. Plain PPO: agent_type=ppo, masking=disabled
 2. PPO + Action Masking: agent_type=ppo, masking=enabled
-3. Deterministic LGRL: agent_type=lgrl, masking=disabled (training uses deterministic subgoal)
-4. Deterministic LGRL + Action Masking: agent_type=lgrl, masking=enabled (training uses deterministic subgoal)
-5. Pure LGRL: agent_type=lgrl, masking=disabled (eval uses LLM subgoal; training still deterministic)
-6. LGRL + Action Masking: agent_type=lgrl, masking=enabled (eval uses LLM subgoal; training still deterministic)
+3. Deterministic LGRL: agent_type=lgrl, masking=disabled, deterministic eval subgoal manager
+4. Deterministic LGRL + Action Masking: agent_type=lgrl, masking=enabled, deterministic eval subgoal manager
+5. Pure LGRL: agent_type=lgrl, masking=disabled, LLM eval subgoal manager
+6. LGRL + Action Masking: agent_type=lgrl, masking=enabled, LLM eval subgoal manager
 """
 
 import argparse
@@ -36,6 +36,7 @@ class AblationStudyConfig:
     total_timesteps: Optional[int] = None
     eval_episodes: Optional[int] = None
     model_output_dir: str = "models_ablation"
+    run_label: Optional[str] = None
     save_after_train: bool = True
     enable_pengym: Optional[bool] = None
     enable_nasim: Optional[bool] = None
@@ -61,21 +62,25 @@ class AblationStudyRunner:
             "name": "Deterministic LGRL",
             "agent_type": PPOTrainer.AGENT_TYPE_LGRL,
             "use_action_masking": False,
+            "subgoal_manager_type": PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC,
         },
         {
             "name": "Deterministic LGRL + Action Masking",
             "agent_type": PPOTrainer.AGENT_TYPE_LGRL,
             "use_action_masking": True,
+            "subgoal_manager_type": PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC,
         },
         {
             "name": "Pure LGRL",
             "agent_type": PPOTrainer.AGENT_TYPE_LGRL,
             "use_action_masking": False,
+            "subgoal_manager_type": PPOTrainer.SUBGOAL_MANAGER_LLM,
         },
         {
             "name": "LGRL + Action Masking",
             "agent_type": PPOTrainer.AGENT_TYPE_LGRL,
             "use_action_masking": True,
+            "subgoal_manager_type": PPOTrainer.SUBGOAL_MANAGER_LLM,
         },
     ]
 
@@ -120,6 +125,11 @@ class AblationStudyRunner:
             scenario_name=self.ablation_config.scenario_name,
             scenario_path=self.ablation_config.scenario_path,
             config_path=self.ablation_config.config_path,
+            run_label=config_name,
+            subgoal_manager_type=config_spec.get(
+                "subgoal_manager_type",
+                PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC,
+            ),
             train_seeds=self.ablation_config.seeds,
             eval_seeds=self.ablation_config.eval_seeds,
             total_timesteps=self.ablation_config.total_timesteps,
@@ -141,6 +151,7 @@ class AblationStudyRunner:
             "agent_type": config_spec["agent_type"],
             "use_action_masking": config_spec["use_action_masking"],
             "model_path": result["model_path"],
+            "reward_history_artifacts": result.get("reward_history_artifacts"),
             "metrics": result["metrics"],
             "done": result["done"],
             "truncated": result["truncated"],
@@ -159,10 +170,12 @@ class AblationStudyRunner:
             summary[config_name] = {
                 "agent_type": result["agent_type"],
                 "use_action_masking": result["use_action_masking"],
+                "reward_history_artifacts": result.get("reward_history_artifacts"),
                 "success_rate": metrics.get("success_rate"),
                 "average_steps": metrics.get("average_steps"),
                 "average_return_per_training_episodes": metrics.get("average_return_per_training_episodes"),
                 "average_return_over_training_steps": metrics.get("average_return_over_training_steps"),
+                "average_reward_over_training_steps": metrics.get("average_reward_over_training_steps"),
                 "convergence_timestep": metrics.get("convergence_timestep"),
                 "convergence_speed_over_training_steps": metrics.get("convergence_speed_over_training_steps"),
                 "average_token_usage": metrics.get("average_token_usage"),
@@ -171,10 +184,12 @@ class AblationStudyRunner:
             print(f"Configuration: {config_name}")
             print(f"  Agent Type: {result['agent_type']}")
             print(f"  Action Masking: {'Enabled' if result['use_action_masking'] else 'Disabled'}")
+            print(f"  Reward Artifacts: {result.get('reward_history_artifacts', 'N/A')}")
             print(f"  Success Rate: {metrics.get('success_rate', 'N/A')}")
             print(f"  Average Steps: {metrics.get('average_steps', 'N/A')}")
             print(f"  Avg Return per Episodes: {metrics.get('average_return_per_training_episodes', 'N/A')}")
             print(f"  Avg Return over Steps: {metrics.get('average_return_over_training_steps', 'N/A')}")
+            print(f"  Avg Reward over Training Steps: {metrics.get('average_reward_over_training_steps', 'N/A')}")
             print(f"  Convergence Timestep: {metrics.get('convergence_timestep', 'N/A')}")
             print(f"  Convergence Speed: {metrics.get('convergence_speed_over_training_steps', 'N/A')}")
             print(f"  Avg Token Usage: {metrics.get('average_token_usage', 'N/A')}")

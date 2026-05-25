@@ -18,6 +18,7 @@ class ExperimentConfig:
     scenario_path: Optional[str] = None
     config_path: Optional[str] = None
     model_path: Optional[str] = None
+    run_label: Optional[str] = None
     train_seeds: Optional[Iterable[int]] = None
     eval_seeds: Optional[Iterable[int]] = None
     total_timesteps: Optional[int] = None
@@ -46,8 +47,8 @@ class ExperimentRunner:
 
     def _configure_backends(self):
         # Default behavior by scenario mode:
-        # - dynamic/reseeded (scenario_name): NASIM simulation mode
-        # - static/custom (scenario_path): PenGym mode
+        # - dynamic/reseeded (scenario_name)
+        # - static/custom (scenario_path)
         dynamic_mode = self.config.scenario_name is not None and self.config.scenario_path is None
 
         if self.config.enable_pengym is None:
@@ -85,7 +86,12 @@ class ExperimentRunner:
         if self.config.save_after_train and self.config.model_path is None:
             model_path = self.trainer.save(output_dir=self.config.model_output_dir)
 
-        done, truncated, steps = self.trainer.evaluate(
+        reward_history_artifacts = self.trainer.save_reward_history_artifacts(
+            output_dir=self.config.model_output_dir,
+            run_label=self.config.run_label,
+        )
+
+        evaluation = self.trainer.evaluate(
             scenario_name=self.config.scenario_name,
             scenario_path=self.config.scenario_path,
             num_episodes=self.config.eval_episodes,
@@ -97,6 +103,7 @@ class ExperimentRunner:
             "average_steps": self.trainer.last_eval_metrics.get("average_steps"),
             "average_return_per_training_episodes": self.trainer.last_train_metrics.get("average_return_per_training_episodes"),
             "average_return_over_training_steps": self.trainer.last_train_metrics.get("average_return_over_training_steps"),
+            "average_reward_over_training_steps": self.trainer.last_train_metrics.get("average_reward_over_training_steps"),
             "convergence_timestep": self.trainer.last_train_metrics.get("convergence_timestep"),
             "convergence_speed_over_training_steps": self.trainer.last_train_metrics.get("convergence_speed_over_training_steps"),
             "average_token_usage": self.trainer.last_eval_metrics.get("average_token_usage"),
@@ -105,10 +112,11 @@ class ExperimentRunner:
         return {
             "model": model,
             "model_path": model_path,
-            "done": done,
-            "truncated": truncated,
-            "steps": steps,
+            "done": evaluation["done"],
+            "truncated": evaluation["truncated"],
+            "steps": evaluation["steps"],
             "metrics": metrics,
+            "reward_history_artifacts": reward_history_artifacts,
         }
 
 
@@ -192,8 +200,8 @@ def _build_parser() -> argparse.ArgumentParser:
         ],
         default=PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC,
         help=(
-            "Legacy compatibility option. LGRL pipeline now always uses deterministic "
-            "subgoal manager for training and LLM subgoal manager for evaluation."
+            "Evaluation subgoal manager type for LGRL runs. Training remains deterministic; "
+            "this flag controls whether evaluation uses deterministic or LLM guidance."
         ),
     )
     parser.add_argument(
@@ -241,14 +249,17 @@ def main(argv=None) -> int:
         parser.error(str(err))
 
     if args.agent_type == PPOTrainer.AGENT_TYPE_LGRL:
-        print(
-            "* NOTE: LGRL pipeline uses deterministic subgoal manager for training "
-            "and LLM subgoal manager for evaluation."
-        )
-        print(
-            "* NOTE: CLI does not inject a custom llm_client yet. LLM evaluation "
-            "will use fallback behavior unless configured in Python API."
-        )
+        if args.subgoal_manager_type == PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC:
+            print(
+                "* NOTE: LGRL training uses deterministic subgoals, and evaluation is also deterministic."
+            )
+        else:
+            print(
+                "* NOTE: LGRL training uses deterministic subgoals, and evaluation uses the LLM subgoal manager."
+            )
+            print(
+                "* NOTE: CLI does not inject a custom llm_client yet. LLM evaluation will use fallback behavior unless configured in Python API."
+            )
 
     config = ExperimentConfig(
         agent_type=args.agent_type,
@@ -256,6 +267,7 @@ def main(argv=None) -> int:
         scenario_path=args.scenario_path,
         config_path=args.config_path,
         model_path=args.model_path,
+        run_label=f"{args.agent_type}_{args.scenario_name or Path(args.scenario_path).stem}",
         train_seeds=train_seeds,
         eval_seeds=eval_seeds,
         total_timesteps=args.total_timesteps,
@@ -275,6 +287,7 @@ def main(argv=None) -> int:
         "done": result["done"],
         "truncated": result["truncated"],
         "steps": result["steps"],
+        "reward_history_artifacts": result.get("reward_history_artifacts"),
         "use_action_masking": config.use_action_masking,
         "metrics": result["metrics"],
     }
@@ -287,6 +300,7 @@ def main(argv=None) -> int:
         print(f"  done: {summary['done']}")
         print(f"  truncated: {summary['truncated']}")
         print(f"  steps: {summary['steps']}")
+        print(f"  reward_history_artifacts: {summary['reward_history_artifacts']}")
         print(f"  use_action_masking: {summary['use_action_masking']}")
         print(f"  success_rate: {summary['metrics']['success_rate']}")
         print(f"  average_steps: {summary['metrics']['average_steps']}")
@@ -297,6 +311,10 @@ def main(argv=None) -> int:
         print(
             "  average_return_over_training_steps: "
             f"{summary['metrics']['average_return_over_training_steps']}"
+        )
+        print(
+            "  average_reward_over_training_steps: "
+            f"{summary['metrics']['average_reward_over_training_steps']}"
         )
         print(f"  convergence_timestep: {summary['metrics']['convergence_timestep']}")
         print(

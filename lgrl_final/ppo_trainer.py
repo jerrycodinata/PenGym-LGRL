@@ -1,6 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+import json
+import re
 
 import gymnasium as gym
 import numpy as np
@@ -93,17 +95,18 @@ class PPOTrainer:
         if self.agent_type == self.AGENT_TYPE_LGRL:
             # LGRL pipeline contract:
             # - training uses deterministic subgoal transitions
-            # - evaluation uses LLM-driven subgoal transitions
+            # - evaluation follows the selected subgoal manager type
             if subgoal_manager is not None:
                 self.train_subgoal_manager = subgoal_manager
             else:
                 self.train_subgoal_manager = DeterministicSubgoalManager(utils=utils, storyboard=self.storyboard)
 
-            self.eval_subgoal_manager = LLMSubgoalManager(
+            self.eval_subgoal_manager = self._build_eval_subgoal_manager(
                 utils=utils,
                 storyboard=self.storyboard,
                 llm_client=llm_client,
                 translator=translator,
+                scenario_name=None,
             )
         else:
             self.train_subgoal_manager = None
@@ -127,6 +130,36 @@ class PPOTrainer:
             enable_action_masking=self.use_action_masking,
         )
         self.env_factory = self.train_env_factory
+
+    def _build_eval_subgoal_manager(self, utils, storyboard, llm_client=None, translator=None, scenario_name=None):
+        if self.subgoal_manager_type == self.SUBGOAL_MANAGER_DETERMINISTIC:
+            return DeterministicSubgoalManager(utils=utils, storyboard=storyboard)
+        if self.subgoal_manager_type == self.SUBGOAL_MANAGER_LLM:
+            return LLMSubgoalManager(
+                utils=utils,
+                storyboard=storyboard,
+                llm_client=llm_client,
+                translator=translator,
+                scenario_name=scenario_name,
+            )
+        raise ValueError(
+            f"Unsupported subgoal manager type for evaluation: {self.subgoal_manager_type}"
+        )
+
+    def _sync_eval_subgoal_manager_context(self, scenario_name: Optional[str], scenario_path: Optional[str]):
+        if self.eval_subgoal_manager is None:
+            return
+
+        derived_scenario_name = scenario_name
+        if derived_scenario_name is None and scenario_path is not None:
+            derived_scenario_name = Path(scenario_path).stem
+
+        if hasattr(self.eval_subgoal_manager, "scenario_name"):
+            self.eval_subgoal_manager.scenario_name = derived_scenario_name
+
+        translator = getattr(self.eval_subgoal_manager, "translator", None)
+        if translator is not None and hasattr(translator, "scenario"):
+            translator.scenario = derived_scenario_name
 
     def _resolve_scenario_inputs(
         self,
@@ -190,6 +223,7 @@ class PPOTrainer:
         self.scenario_name = resolved_name
         self.scenario_path = resolved_path
         self.convergence_speed = -1
+        self._sync_eval_subgoal_manager_context(resolved_name, resolved_path)
 
         if model_path is not None:
             self.last_train_metrics = {
@@ -224,13 +258,63 @@ class PPOTrainer:
         self.last_train_metrics = {
             "average_return_per_training_episodes": convergence_cb.average_return_per_training_episodes,
             "average_return_over_training_steps": convergence_cb.average_return_over_training_steps,
+            "average_reward_over_training_steps": convergence_cb.average_reward_over_training_steps,
             "training_episodes_observed": convergence_cb.num_recorded_episodes,
             "convergence_timestep": convergence_cb.convergence_timestep,
             "convergence_speed_over_training_steps": convergence_cb.convergence_speed_over_training_steps,
+            "reward_history": convergence_cb.reward_history,
+            "reward_history_interval_steps": convergence_cb.reward_history_interval_steps,
         }
         print("=================TRAINING COMPLETE=================")
 
         return self.model
+
+    @staticmethod
+    def _slugify_label(label: str) -> str:
+        safe_label = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("_")
+        return safe_label or "run"
+
+    def save_reward_history_artifacts(self, output_dir: str = "models", run_label: Optional[str] = None):
+        reward_history = self.last_train_metrics.get("reward_history")
+        if not reward_history:
+            return None
+
+        label_source = run_label or self.scenario_name or self.scenario_path or self.agent_type
+        safe_label = self._slugify_label(str(label_source))
+        artifact_dir = Path(output_dir) / "reward_history"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        history_path = artifact_dir / f"{safe_label}_reward_history.json"
+        plot_path = artifact_dir / f"{safe_label}_reward_history.png"
+
+        payload = {
+            "agent_type": self.agent_type,
+            "scenario_name": self.scenario_name,
+            "scenario_path": self.scenario_path,
+            "reward_history_interval_steps": self.last_train_metrics.get("reward_history_interval_steps"),
+            "reward_history": reward_history,
+        }
+        history_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        import matplotlib.pyplot as plt
+
+        steps = [entry["training_step"] for entry in reward_history]
+        mean_rewards = [entry["mean_reward"] for entry in reward_history]
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(steps, mean_rewards, marker="o", linewidth=1.5)
+        plt.title(f"Training Reward History - {safe_label}")
+        plt.xlabel("Training Steps")
+        plt.ylabel("Mean Reward per Window")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(plot_path, dpi=200)
+        plt.close()
+
+        return {
+            "reward_history_path": str(history_path),
+            "reward_plot_path": str(plot_path),
+        }
 
     def evaluate(
         self,
@@ -247,6 +331,7 @@ class PPOTrainer:
             scenario_path,
             allow_fallback=True,
         )
+        self._sync_eval_subgoal_manager_context(resolved_name, resolved_path)
         episodes_per_seed = num_episodes if num_episodes is not None else self.eval_episodes
         eval_seeds = list(seeds) if seeds is not None else [1000, 1001, 1002, 1003]
 
@@ -360,7 +445,14 @@ class PPOTrainer:
         print(f"Average Cumulative Reward  : {avg_cumulative_reward:.2f}")
         print(f"Average Tokens Used        : {avg_tokens_used:.2f}")
 
-        return done, truncated, ep_steps
+        return {
+            "done": done,
+            "truncated": truncated,
+            "steps": ep_steps,
+            "metrics": self.last_eval_metrics,
+            "total_eval_episodes": total_eval_episodes,
+            "success_count": success_count,
+        }
 
     def save(self, output_dir: str = "models") -> str:
         if self.model is None:

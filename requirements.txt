@@ -5,3 +5,5 @@ pymetasploit3
 stable-baselines3
 sb3_contrib
 numpy
+gymnasium
+matplotlib
