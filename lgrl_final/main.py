@@ -6,6 +6,8 @@ from typing import Iterable, Optional
 
 import pengym.utilities as utils
 
+from lgrl_final.llm_clients import build_llm_client
+from lgrl_final.observation_translator import ObservationTranslator
 from lgrl_final.ppo_trainer import PPOTrainer
 
 
@@ -205,6 +207,43 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--llm-provider",
+        choices=["deepseek"],
+        default="deepseek",
+        help="LLM provider to use when LLM subgoal guidance is enabled.",
+    )
+    parser.add_argument(
+        "--llm-api-key",
+        help="API key for the selected LLM provider. Defaults to DEEPSEEK_API_KEY or OPENAI_API_KEY.",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        help="Override the provider base URL. Defaults to https://api.deepseek.com for DeepSeek.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default="deepseek-v4-pro",
+        help="Model name to call for LLM-guided evaluation.",
+    )
+    parser.add_argument(
+        "--llm-temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature for the LLM provider.",
+    )
+    parser.add_argument(
+        "--llm-max-tokens",
+        type=int,
+        default=16,
+        help="Maximum tokens to request from the LLM provider.",
+    )
+    parser.add_argument(
+        "--llm-timeout",
+        type=float,
+        default=30.0,
+        help="HTTP timeout in seconds for the LLM provider.",
+    )
+    parser.add_argument(
         "--disable-action-masking",
         action="store_true",
         help="Disable action masking in both training and evaluation (ablation mode).",
@@ -248,17 +287,31 @@ def main(argv=None) -> int:
     except ValueError as err:
         parser.error(str(err))
 
+    llm_client = None
+    translator = None
     if args.agent_type == PPOTrainer.AGENT_TYPE_LGRL:
         if args.subgoal_manager_type == PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC:
             print(
                 "* NOTE: LGRL training uses deterministic subgoals, and evaluation is also deterministic."
             )
         else:
+            try:
+                llm_client = build_llm_client(
+                    provider=args.llm_provider,
+                    api_key=args.llm_api_key,
+                    base_url=args.llm_base_url,
+                    model=args.llm_model,
+                    temperature=args.llm_temperature,
+                    max_tokens=args.llm_max_tokens,
+                    timeout=args.llm_timeout,
+                )
+            except ValueError as err:
+                parser.error(str(err))
+
+            translator = ObservationTranslator()
+
             print(
-                "* NOTE: LGRL training uses deterministic subgoals, and evaluation uses the LLM subgoal manager."
-            )
-            print(
-                "* NOTE: CLI does not inject a custom llm_client yet. LLM evaluation will use fallback behavior unless configured in Python API."
+                f"* NOTE: LGRL evaluation will use the {args.llm_provider} provider with model {args.llm_model}."
             )
 
     config = ExperimentConfig(
@@ -278,6 +331,8 @@ def main(argv=None) -> int:
         use_action_masking=not args.disable_action_masking,
         enable_pengym=(None if not args.disable_pengym else False),
         enable_nasim=(True if args.nasim_simulation else None),
+        llm_client=llm_client,
+        translator=translator,
     )
 
     result = ExperimentRunner(config).run()

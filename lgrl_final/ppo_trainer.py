@@ -37,7 +37,7 @@ class PPOTrainer:
         translator=None,
         max_steps: int = 150,
         total_episodes: int = 100,
-        eval_episodes: int = 100,
+        eval_episodes: int = 5,
         frame_memory: int = 1,
         window_size: int = 5,
         margin: int = 2,
@@ -263,6 +263,9 @@ class PPOTrainer:
             "convergence_timestep": convergence_cb.convergence_timestep,
             "convergence_speed_over_training_steps": convergence_cb.convergence_speed_over_training_steps,
             "reward_history": convergence_cb.reward_history,
+            "episode_returns": convergence_cb.episode_returns,
+            "episode_end_steps": convergence_cb.episode_end_steps,
+            "rolling_average_returns": convergence_cb.rolling_average_returns,
             "reward_history_interval_steps": convergence_cb.reward_history_interval_steps,
         }
         print("=================TRAINING COMPLETE=================")
@@ -276,6 +279,8 @@ class PPOTrainer:
 
     def save_reward_history_artifacts(self, output_dir: str = "models", run_label: Optional[str] = None):
         reward_history = self.last_train_metrics.get("reward_history")
+        episode_end_steps = self.last_train_metrics.get("episode_end_steps")
+        rolling_average_returns = self.last_train_metrics.get("rolling_average_returns")
         if not reward_history:
             return None
 
@@ -285,7 +290,8 @@ class PPOTrainer:
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
         history_path = artifact_dir / f"{safe_label}_reward_history.json"
-        plot_path = artifact_dir / f"{safe_label}_reward_history.png"
+        reward_plot_path = artifact_dir / f"{safe_label}_reward_history.png"
+        return_plot_path = artifact_dir / f"{safe_label}_average_return_over_training_steps.png"
 
         payload = {
             "agent_type": self.agent_type,
@@ -293,27 +299,40 @@ class PPOTrainer:
             "scenario_path": self.scenario_path,
             "reward_history_interval_steps": self.last_train_metrics.get("reward_history_interval_steps"),
             "reward_history": reward_history,
+            "episode_end_steps": episode_end_steps,
+            "rolling_average_returns": rolling_average_returns,
         }
         history_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
         import matplotlib.pyplot as plt
 
-        steps = [entry["training_step"] for entry in reward_history]
-        mean_rewards = [entry["mean_reward"] for entry in reward_history]
-
+        reward_steps = [entry["training_step"] for entry in reward_history]
+        reward_means = [entry["mean_reward"] for entry in reward_history]
         plt.figure(figsize=(10, 5))
-        plt.plot(steps, mean_rewards, marker="o", linewidth=1.5)
+        plt.plot(reward_steps, reward_means, marker="o", linewidth=1.5)
         plt.title(f"Training Reward History - {safe_label}")
         plt.xlabel("Training Steps")
         plt.ylabel("Mean Reward per Window")
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(plot_path, dpi=200)
+        plt.savefig(reward_plot_path, dpi=200)
         plt.close()
+
+        if episode_end_steps and rolling_average_returns:
+            plt.figure(figsize=(10, 5))
+            plt.plot(episode_end_steps, rolling_average_returns, marker="o", linewidth=1.5)
+            plt.title(f"Average Return Over Training Steps - {safe_label}")
+            plt.xlabel("Training Steps")
+            plt.ylabel("Average Return per Episode Window")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(return_plot_path, dpi=200)
+            plt.close()
 
         return {
             "reward_history_path": str(history_path),
-            "reward_plot_path": str(plot_path),
+            "reward_plot_path": str(reward_plot_path),
+            "average_return_plot_path": str(return_plot_path) if episode_end_steps and rolling_average_returns else None,
         }
 
     def evaluate(
@@ -333,7 +352,7 @@ class PPOTrainer:
         )
         self._sync_eval_subgoal_manager_context(resolved_name, resolved_path)
         episodes_per_seed = num_episodes if num_episodes is not None else self.eval_episodes
-        eval_seeds = list(seeds) if seeds is not None else [1000, 1001, 1002, 1003]
+        eval_seeds = list(seeds) if seeds is not None else [1000 + i for i in range(10)]
 
         print("\n---------------------------------------")
         print("Evaluation phase:")

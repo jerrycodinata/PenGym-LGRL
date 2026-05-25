@@ -36,8 +36,8 @@ class PenGymNetwork(Network):
         # Catch actions that did not succeed in the superclass function
         # PENGYM_ERROR is used to check if this error comes from PenGym or not; consequently we do not print a failure
         # that occured in the super function if the error has already been printed in a PenGym function
-        if not obs.success and not utils.PENGYM_ERROR:
-            utils.print_failure(action, obs, storyboard.TAG_NASIM_PENGYM, end-start)
+        # if not obs.success and not utils.PENGYM_ERROR:
+        #     utils.print_failure(action, obs, storyboard.TAG_NASIM_PENGYM, end-start)
 
         return next_state, obs
 
@@ -143,10 +143,10 @@ class PenGymNetwork(Network):
             start = time.time()
             next_state, result = super()._perform_subnet_scan(next_state, action)
             end = time.time()
-            if result.success:
-                print(f"  Host {action.target} Action '{action.name}' SUCCESS: discovered={result.discovered} newly_discovered={result.newly_discovered} Execution Time: {end-start:1.6f}{tag_nasim}")
-            else:
-                utils.print_failure(action, result, storyboard.NASIM, end-start)
+            # if result.success:
+            #     print(f"  Host {action.target} Action '{action.name}' SUCCESS: discovered={result.discovered} newly_discovered={result.newly_discovered} Execution Time: {end-start:1.6f}{tag_nasim}")
+            # else:
+            #     utils.print_failure(action, result, storyboard.NASIM, end-start)
 
         return next_state, result
 

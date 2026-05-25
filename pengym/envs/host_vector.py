@@ -124,7 +124,7 @@ class PenGymHostVector(HostVector):
                 start = time.time()
                 result = ActionResult(True, services=filtered_services) # NASim code: ActionResult(True, 0, services=self.services)
                 end = time.time()
-                print(f"  Host {self.address} Action '{action.name}' SUCCESS: services={result.services} Execution Time: {end-start:1.6f}{tag_nasim}")
+                # print(f"  Host {self.address} Action '{action.name}' SUCCESS: services={result.services} Execution Time: {end-start:1.6f}{tag_nasim}")
 
             return next_state, result
 
@@ -174,11 +174,11 @@ class PenGymHostVector(HostVector):
                 if self.check_allowed_traffic(action, firewall, address_space, host_services_dict):
                     result = ActionResult(True, os=self.os) # NASim code: ActionResult(True, 0, os=self.os)
                     end = time.time()
-                    print(f"  Host {self.address} Action '{action.name}' SUCCESS: os={result.os} Execution Time: {end-start:1.6f}{tag_nasim}")
+                    # print(f"  Host {self.address} Action '{action.name}' SUCCESS: os={result.os} Execution Time: {end-start:1.6f}{tag_nasim}")
                 else:
                     result = ActionResult(False, undefined_error=True) # connection_error may be more appropriate
                     end = time.time()
-                    utils.print_failure(action, result, storyboard.NASIM, end-start)
+                    # utils.print_failure(action, result, storyboard.NASIM, end-start)
 
             return next_state, result
 
@@ -288,10 +288,10 @@ class PenGymHostVector(HostVector):
                 start = time.time()
                 next_state, result = super().perform_action(action)
                 end = time.time()
-                if result.success:
-                    print(f"  Host {self.address} Action '{action.name}' SUCCESS: access={AccessLevel(result.access)} services={result.services} os={result.os} Execution Time: {end-start:1.6f}{tag_nasim}")
-                else:
-                    utils.print_failure(action, result, storyboard.NASIM, end-start)
+                # if result.success:
+                #     print(f"  Host {self.address} Action '{action.name}' SUCCESS: access={AccessLevel(result.access)} services={result.services} os={result.os} Execution Time: {end-start:1.6f}{tag_nasim}")
+                # else:
+                #     utils.print_failure(action, result, storyboard.NASIM, end-start)
 
             return next_state, result
 
@@ -352,7 +352,7 @@ class PenGymHostVector(HostVector):
                 start = time.time()
                 result = ActionResult(True, access=self.access, processes=self.processes) # NASim code: ActionResult(True, 0, access=self.access, processes=self.processes)
                 end = time.time()
-                print(f"  Host {self.address} Action '{action.name}' SUCCESS: processes={result.processes} access={AccessLevel(result.access)} Execution Time: {end-start:1.6f}{tag_nasim}")
+                # print(f"  Host {self.address} Action '{action.name}' SUCCESS: processes={result.processes} access={AccessLevel(result.access)} Execution Time: {end-start:1.6f}{tag_nasim}")
 
             return next_state, result
 
@@ -424,10 +424,10 @@ class PenGymHostVector(HostVector):
                 start = time.time()
                 next_state, result = super().perform_action(action)
                 end = time.time()
-                if result.success:
-                    print(f"  Host {self.address} Action '{action.name}' SUCCESS: access={AccessLevel(result.access)} processes={result.processes} os={result.os} Execution Time: {end-start:1.6f}{tag_nasim}")
-                else:
-                    utils.print_failure(action, result, storyboard.NASIM, end-start)
+                # if result.success:
+                #     print(f"  Host {self.address} Action '{action.name}' SUCCESS: access={AccessLevel(result.access)} processes={result.processes} os={result.os} Execution Time: {end-start:1.6f}{tag_nasim}")
+                # else:
+                #     utils.print_failure(action, result, storyboard.NASIM, end-start)
 
             return next_state, result
 

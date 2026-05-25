@@ -20,8 +20,14 @@ from typing import List, Optional
 
 import pengym.utilities as utils
 
+from lgrl_final.llm_clients import build_llm_client
+from lgrl_final.observation_translator import ObservationTranslator
 from lgrl_final.main import ExperimentConfig, ExperimentRunner
 from lgrl_final.ppo_trainer import PPOTrainer
+
+
+def _slugify_label(label: str) -> str:
+    return "".join(char if char.isalnum() or char in {".", "_", "-"} else "_" for char in label).strip("_") or "run"
 
 
 @dataclass
@@ -87,13 +93,14 @@ class AblationStudyRunner:
     def __init__(self, ablation_config: AblationStudyConfig):
         self.ablation_config = ablation_config
         self.results = {}
+        self.generated_root = Path(self.ablation_config.model_output_dir) / "generated"
 
         if self.ablation_config.seeds is None:
             random.seed(42)
             self.ablation_config.seeds = [random.randint(0, 10000) for _ in range(ablation_config.num_seeds)]
 
         if self.ablation_config.eval_seeds is None:
-            self.ablation_config.eval_seeds = [1000 + i for i in range(4)]
+            self.ablation_config.eval_seeds = [1000 + i for i in range(10)]
 
     def run_all(self) -> dict:
         """Run all 6 configurations."""
@@ -101,6 +108,8 @@ class AblationStudyRunner:
         print("LGRL ABLATION STUDY")
         print("=" * 80)
         print(f"Scenario: {self.ablation_config.scenario_name or self.ablation_config.scenario_path}")
+        if self.ablation_config.total_timesteps is not None:
+            print(f"Max timesteps: {self.ablation_config.total_timesteps}")
         print(f"Training seeds: {self.ablation_config.seeds}")
         print(f"Evaluation seeds: {self.ablation_config.eval_seeds}")
         print(f"Number of configurations: {len(self.CONFIGURATIONS)}")
@@ -116,16 +125,97 @@ class AblationStudyRunner:
 
         return self._aggregate_results()
 
+    @staticmethod
+    def _format_value(value):
+        if value is None:
+            return "N/A"
+        if isinstance(value, bool):
+            return "Enabled" if value else "Disabled"
+        if isinstance(value, float):
+            return f"{value:.4f}"
+        return str(value)
+
+    def _print_results_table(self, summary: dict) -> None:
+        columns = [
+            ("Configuration", "configuration"),
+            ("Agent", "agent_type"),
+            ("Mask", "use_action_masking"),
+            ("Success Rate", "success_rate"),
+            ("Avg Steps", "average_steps"),
+            ("Avg Return/Ep", "average_return_per_training_episodes"),
+            ("Avg Return/Step", "average_return_over_training_steps"),
+            ("Avg Reward/Step", "average_reward_over_training_steps"),
+            ("Convergence Timestep", "convergence_timestep"),
+            ("Convergence Speed", "convergence_speed_over_training_steps"),
+            ("Avg Token Usage", "average_token_usage"),
+        ]
+
+        widths = []
+        for header, key in columns:
+            max_width = len(header)
+            for row in summary.values():
+                value = row.get(key)
+                max_width = max(max_width, len(self._format_value(value)))
+            widths.append(max_width)
+
+        def render_row(values):
+            return " | ".join(str(value).ljust(width) for value, width in zip(values, widths))
+
+        headers = [header for header, _ in columns]
+        separator = "-+-".join("-" * width for width in widths)
+
+        print("\nAblation Study Results Table")
+        print(render_row(headers))
+        print(separator)
+        for row in summary.values():
+            rendered = [self._format_value(row.get(key)) for _, key in columns]
+            print(render_row(rendered))
+
+    def _write_run_manifest(self, run_output_dir: Path, config_name: str, config_spec: dict, run_folder_name: str) -> Path:
+        """Persist the effective configuration for a single ablation run."""
+        manifest_path = run_output_dir / "run_config.json"
+        run_manifest = {
+            "config_name": config_name,
+            "scenario_name": self.ablation_config.scenario_name,
+            "scenario_path": self.ablation_config.scenario_path,
+            "run_label": run_folder_name,
+            "agent_type": config_spec["agent_type"],
+            "subgoal_manager_type": config_spec.get(
+                "subgoal_manager_type",
+                PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC,
+            ),
+            "use_action_masking": config_spec["use_action_masking"],
+            "train_seeds": self.ablation_config.seeds,
+            "eval_seeds": self.ablation_config.eval_seeds,
+            "num_seeds": len(self.ablation_config.seeds or []),
+            "eval_episodes": self.ablation_config.eval_episodes,
+            "total_timesteps": self.ablation_config.total_timesteps,
+            "save_after_train": self.ablation_config.save_after_train,
+            "config_path": self.ablation_config.config_path,
+            "enable_pengym": self.ablation_config.enable_pengym,
+            "enable_nasim": self.ablation_config.enable_nasim,
+            "model_output_dir": str(run_output_dir),
+        }
+        manifest_path.write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
+        return manifest_path
+
     def _run_configuration(self, config_spec: dict) -> dict:
         """Run a single ablation configuration."""
         config_name = config_spec["name"]
+        scenario_label = self.ablation_config.scenario_name or (
+            Path(self.ablation_config.scenario_path).stem if self.ablation_config.scenario_path else "scenario"
+        )
+        run_folder_name = _slugify_label(f"{scenario_label}_{config_name}")
+        run_output_dir = self.generated_root / run_folder_name
+        run_output_dir.mkdir(parents=True, exist_ok=True)
+        run_manifest_path = self._write_run_manifest(run_output_dir, config_name, config_spec, run_folder_name)
 
         config = ExperimentConfig(
             agent_type=config_spec["agent_type"],
             scenario_name=self.ablation_config.scenario_name,
             scenario_path=self.ablation_config.scenario_path,
             config_path=self.ablation_config.config_path,
-            run_label=config_name,
+            run_label=run_folder_name,
             subgoal_manager_type=config_spec.get(
                 "subgoal_manager_type",
                 PPOTrainer.SUBGOAL_MANAGER_DETERMINISTIC,
@@ -135,7 +225,7 @@ class AblationStudyRunner:
             total_timesteps=self.ablation_config.total_timesteps,
             eval_episodes=self.ablation_config.eval_episodes,
             save_after_train=self.ablation_config.save_after_train,
-            model_output_dir=self.ablation_config.model_output_dir,
+            model_output_dir=str(run_output_dir),
             use_action_masking=config_spec["use_action_masking"],
             enable_pengym=self.ablation_config.enable_pengym,
             enable_nasim=self.ablation_config.enable_nasim,
@@ -146,12 +236,33 @@ class AblationStudyRunner:
         runner = ExperimentRunner(config)
         result = runner.run()
 
+        metrics_path = run_output_dir / f"{run_folder_name}_metrics.json"
+        metrics_payload = {
+            "config_name": config_name,
+            "scenario_name": self.ablation_config.scenario_name,
+            "scenario_path": self.ablation_config.scenario_path,
+            "run_label": run_folder_name,
+            "run_config_path": str(run_manifest_path),
+            "agent_type": config_spec["agent_type"],
+            "use_action_masking": config_spec["use_action_masking"],
+            "model_path": result["model_path"],
+            "reward_history_artifacts": result.get("reward_history_artifacts"),
+            "metrics": result["metrics"],
+            "done": result["done"],
+            "truncated": result["truncated"],
+            "steps": result["steps"],
+        }
+        metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
+
         return {
             "config_name": config_name,
             "agent_type": config_spec["agent_type"],
             "use_action_masking": config_spec["use_action_masking"],
             "model_path": result["model_path"],
             "reward_history_artifacts": result.get("reward_history_artifacts"),
+            "run_config_path": str(run_manifest_path),
+            "metrics_path": str(metrics_path),
+            "run_output_dir": str(run_output_dir),
             "metrics": result["metrics"],
             "done": result["done"],
             "truncated": result["truncated"],
@@ -168,8 +279,11 @@ class AblationStudyRunner:
         for config_name, result in self.results.items():
             metrics = result["metrics"]
             summary[config_name] = {
+                "configuration": config_name,
                 "agent_type": result["agent_type"],
                 "use_action_masking": result["use_action_masking"],
+                "run_output_dir": result.get("run_output_dir"),
+                "metrics_path": result.get("metrics_path"),
                 "reward_history_artifacts": result.get("reward_history_artifacts"),
                 "success_rate": metrics.get("success_rate"),
                 "average_steps": metrics.get("average_steps"),
@@ -184,6 +298,9 @@ class AblationStudyRunner:
             print(f"Configuration: {config_name}")
             print(f"  Agent Type: {result['agent_type']}")
             print(f"  Action Masking: {'Enabled' if result['use_action_masking'] else 'Disabled'}")
+            print(f"  Output Dir: {result.get('run_output_dir', 'N/A')}")
+            print(f"  Run Config: {result.get('run_config_path', 'N/A')}")
+            print(f"  Metrics File: {result.get('metrics_path', 'N/A')}")
             print(f"  Reward Artifacts: {result.get('reward_history_artifacts', 'N/A')}")
             print(f"  Success Rate: {metrics.get('success_rate', 'N/A')}")
             print(f"  Average Steps: {metrics.get('average_steps', 'N/A')}")
@@ -194,6 +311,8 @@ class AblationStudyRunner:
             print(f"  Convergence Speed: {metrics.get('convergence_speed_over_training_steps', 'N/A')}")
             print(f"  Avg Token Usage: {metrics.get('average_token_usage', 'N/A')}")
             print()
+
+        self._print_results_table(summary)
 
         return summary
 
@@ -284,6 +403,43 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable NASIM simulation backend.",
     )
     parser.add_argument(
+        "--llm-provider",
+        choices=["deepseek"],
+        default="deepseek",
+        help="LLM provider to use for LLM-guided ablation runs.",
+    )
+    parser.add_argument(
+        "--llm-api-key",
+        help="API key for the selected LLM provider. Defaults to DEEPSEEK_API_KEY or OPENAI_API_KEY.",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        help="Override the provider base URL. Defaults to https://api.deepseek.com for DeepSeek.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default="deepseek-v4-pro",
+        help="Model name to call for LLM-guided evaluation.",
+    )
+    parser.add_argument(
+        "--llm-temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature for the LLM provider.",
+    )
+    parser.add_argument(
+        "--llm-max-tokens",
+        type=int,
+        default=16,
+        help="Maximum tokens to request from the LLM provider.",
+    )
+    parser.add_argument(
+        "--llm-timeout",
+        type=float,
+        default=30.0,
+        help="HTTP timeout in seconds for the LLM provider.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output final summary as JSON.",
@@ -302,6 +458,21 @@ def main(argv=None) -> int:
     except ValueError as err:
         parser.error(str(err))
 
+    try:
+        llm_client = build_llm_client(
+            provider=args.llm_provider,
+            api_key=args.llm_api_key,
+            base_url=args.llm_base_url,
+            model=args.llm_model,
+            temperature=args.llm_temperature,
+            max_tokens=args.llm_max_tokens,
+            timeout=args.llm_timeout,
+        )
+    except ValueError as err:
+        parser.error(str(err))
+
+    translator = ObservationTranslator()
+
     ablation_config = AblationStudyConfig(
         scenario_name=args.scenario_name,
         scenario_path=args.scenario_path,
@@ -315,6 +486,8 @@ def main(argv=None) -> int:
         save_after_train=not args.no_save,
         enable_pengym=(None if not args.disable_pengym else False),
         enable_nasim=(True if args.nasim_simulation else None),
+        llm_client=llm_client,
+        translator=translator,
     )
 
     runner = AblationStudyRunner(ablation_config)
@@ -324,6 +497,7 @@ def main(argv=None) -> int:
         print("\n" + json.dumps(summary, indent=2))
     else:
         print("\nAblation study complete.")
+        print(f"Generated outputs root: {Path(args.model_output_dir) / 'generated'}")
 
     return 0
 

@@ -161,12 +161,14 @@ class LLMSubgoalManager(BaseSubgoalManager):
         if isinstance(usage, dict):
             total_tokens = usage.get("total_tokens")
             if total_tokens is None:
-                total_tokens = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+                prompt_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0))
+                completion_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
+                total_tokens = prompt_tokens + completion_tokens
         elif usage is not None:
             total_tokens = getattr(usage, "total_tokens", None)
             if total_tokens is None:
-                prompt_tokens = getattr(usage, "prompt_tokens", 0)
-                completion_tokens = getattr(usage, "completion_tokens", 0)
+                prompt_tokens = getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", 0))
+                completion_tokens = getattr(usage, "completion_tokens", getattr(usage, "output_tokens", 0))
                 total_tokens = prompt_tokens + completion_tokens
 
         if total_tokens is None and isinstance(response, dict):
@@ -228,14 +230,18 @@ class LLMSubgoalManager(BaseSubgoalManager):
             return None
 
         response = None
-        if callable(self.llm_client):
-            response = self.llm_client(prompt)
-        elif hasattr(self.llm_client, "generate"):
-            response = self.llm_client.generate(prompt)
-        elif hasattr(self.llm_client, "complete"):
-            response = self.llm_client.complete(prompt)
-        elif hasattr(self.llm_client, "invoke"):
-            response = self.llm_client.invoke(prompt)
+        try:
+            if callable(self.llm_client):
+                response = self.llm_client(prompt)
+            elif hasattr(self.llm_client, "generate"):
+                response = self.llm_client.generate(prompt)
+            elif hasattr(self.llm_client, "complete"):
+                response = self.llm_client.complete(prompt)
+            elif hasattr(self.llm_client, "invoke"):
+                response = self.llm_client.invoke(prompt)
+        except Exception as exc:
+            print(f"* WARNING: LLM query failed, falling back to deterministic subgoal: {exc}")
+            return None
 
         if response is None:
             return None

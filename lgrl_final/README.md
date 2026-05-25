@@ -407,7 +407,17 @@ python -m lgrl_final.main \
 
 ## Python API Usage (for custom LLM client)
 
-CLI currently does not inject a custom LLM client object. Use the Python API when you want real LLM-driven evaluation behavior.
+The CLI can build a DeepSeek-compatible client directly when you select LLM subgoal guidance. Use the Python API when you want a custom client implementation or a different provider wrapper.
+
+```bash
+python -m lgrl_final.main \
+  --agent-type lgrl \
+  --scenario-name tiny-gen \
+  --subgoal-manager-type llm \
+  --llm-api-key "$DEEPSEEK_API_KEY"
+```
+
+The default DeepSeek model is `deepseek-v4-pro`, matching the OpenAI SDK usage shown in DeepSeek's docs.
 
 ```python
 from lgrl_final.main import ExperimentConfig, ExperimentRunner

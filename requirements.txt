@@ -7,3 +7,5 @@ sb3_contrib
 numpy
 gymnasium
 matplotlib
+openai
+python-dotenv

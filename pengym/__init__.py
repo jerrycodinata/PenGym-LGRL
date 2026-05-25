@@ -33,7 +33,8 @@ def create_environment(scenario_name,
     env = PenGymEnv(utilities.scenario, **env_kwargs)
 
     if env:
-        print(f"  Successfully created environment using scenario '{scenario_name}'")
+        # print(f"  Successfully created environment using scenario '{scenario_name}'")
+        pass
     else:
         print(f"  ERROR: Could not create environment using scenario '{scenario_name}'")
 
@@ -67,7 +68,8 @@ def load(path,
     env = PenGymEnv(utilities.scenario, **env_kwargs)
 
     if env:
-        print(f"  Successfully created environment using scenario '{name}'")
+        # print(f"  Successfully created environment using scenario '{name}'")
+        pass
     else:
         print(f"  ERROR: Could not create environment using scenario '{name}'")
 
