@@ -1,0 +1,37 @@
+{
+  "config_name": "Plain PPO",
+  "scenario_name": "small-gen",
+  "scenario_path": null,
+  "run_label": "small-gen_Plain_PPO",
+  "run_root": "models_ablation/generated/small-gen_2026-05-26_122311",
+  "agent_type": "ppo",
+  "subgoal_manager_type": "deterministic",
+  "use_action_masking": false,
+  "train_seeds": [
+    1824,
+    409,
+    4506,
+    4012,
+    3657
+  ],
+  "eval_seeds": [
+    10,
+    40,
+    270,
+    300,
+    430,
+    500,
+    900,
+    1200,
+    1500,
+    2300
+  ],
+  "num_seeds": 5,
+  "eval_episodes": null,
+  "total_timesteps": 200000,
+  "save_after_train": true,
+  "config_path": "/home/jerry/PenGym-LGRL/pengym/CONFIG.yml",
+  "enable_pengym": null,
+  "enable_nasim": null,
+  "model_output_dir": "models_ablation/generated/small-gen_2026-05-26_122311/small-gen_Plain_PPO"
+}

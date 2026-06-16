@@ -1,0 +1,33 @@
+{
+  "config_name": "PPO + Action Masking",
+  "scenario_name": "small-gen",
+  "scenario_path": null,
+  "run_label": "small-gen_PPO___Action_Masking",
+  "run_root": "models_ablation/generated/small-gen_2026-05-26_124419",
+  "agent_type": "ppo",
+  "subgoal_manager_type": "deterministic",
+  "use_action_masking": true,
+  "train_seeds": [
+    10
+  ],
+  "eval_seeds": [
+    40,
+    270,
+    300,
+    430,
+    500,
+    900,
+    1200,
+    1500,
+    2300,
+    1000
+  ],
+  "num_seeds": 1,
+  "eval_episodes": null,
+  "total_timesteps": 200000,
+  "save_after_train": true,
+  "config_path": "/home/jerry/PenGym-LGRL/pengym/CONFIG.yml",
+  "enable_pengym": null,
+  "enable_nasim": null,
+  "model_output_dir": "models_ablation/generated/small-gen_2026-05-26_124419/small-gen_PPO___Action_Masking"
+}

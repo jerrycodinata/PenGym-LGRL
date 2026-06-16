@@ -14,6 +14,7 @@ Configurations:
 import argparse
 import json
 import random
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -28,6 +29,34 @@ from lgrl_final.ppo_trainer import PPOTrainer
 
 def _slugify_label(label: str) -> str:
     return "".join(char if char.isalnum() or char in {".", "_", "-"} else "_" for char in label).strip("_") or "run"
+
+
+def _sanitize_eval_seeds(
+    eval_seeds: Optional[List[int]],
+    train_seeds: Optional[List[int]],
+) -> tuple[Optional[List[int]], list[int]]:
+    if not eval_seeds:
+        return eval_seeds, []
+
+    train_set = set(train_seeds or [])
+    target_len = len(eval_seeds)
+    overlaps = [seed for seed in eval_seeds if seed in train_set]
+    sanitized = [seed for seed in eval_seeds if seed not in train_set]
+    if len(sanitized) == target_len:
+        return sanitized, []
+
+    candidate = 1000
+    existing = set(sanitized)
+    while len(sanitized) < target_len and candidate < 10000:
+        if candidate not in train_set and candidate not in existing:
+            sanitized.append(candidate)
+            existing.add(candidate)
+        candidate += 1
+
+    if len(sanitized) < target_len:
+        raise ValueError("Unable to refill eval seeds without overlapping training seeds.")
+
+    return sanitized, overlaps
 
 
 @dataclass
@@ -93,7 +122,13 @@ class AblationStudyRunner:
     def __init__(self, ablation_config: AblationStudyConfig):
         self.ablation_config = ablation_config
         self.results = {}
-        self.generated_root = Path(self.ablation_config.model_output_dir) / "generated"
+        scenario_label = self.ablation_config.scenario_name or (
+            Path(self.ablation_config.scenario_path).stem if self.ablation_config.scenario_path else "scenario"
+        )
+        run_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        self.generated_root = (
+            Path(self.ablation_config.model_output_dir) / "generated" / f"{scenario_label}_{run_id}"
+        )
 
         if self.ablation_config.seeds is None:
             random.seed(42)
@@ -101,6 +136,14 @@ class AblationStudyRunner:
 
         if self.ablation_config.eval_seeds is None:
             self.ablation_config.eval_seeds = [1000 + i for i in range(10)]
+
+        self.ablation_config.eval_seeds, overlaps = _sanitize_eval_seeds(
+            self.ablation_config.eval_seeds,
+            self.ablation_config.seeds,
+        )
+        if overlaps:
+            overlap_text = ", ".join(str(seed) for seed in sorted(set(overlaps)))
+            print(f"* NOTE: Replaced eval seeds overlapping training seeds: {overlap_text}")
 
     def run_all(self) -> dict:
         """Run all 6 configurations."""
@@ -179,6 +222,7 @@ class AblationStudyRunner:
             "scenario_name": self.ablation_config.scenario_name,
             "scenario_path": self.ablation_config.scenario_path,
             "run_label": run_folder_name,
+            "run_root": str(self.generated_root),
             "agent_type": config_spec["agent_type"],
             "subgoal_manager_type": config_spec.get(
                 "subgoal_manager_type",
@@ -497,7 +541,7 @@ def main(argv=None) -> int:
         print("\n" + json.dumps(summary, indent=2))
     else:
         print("\nAblation study complete.")
-        print(f"Generated outputs root: {Path(args.model_output_dir) / 'generated'}")
+        print(f"Generated outputs root: {runner.generated_root}")
 
     return 0
 

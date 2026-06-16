@@ -356,8 +356,8 @@ ConvergenceCallback tracks episode return, mean reward over training steps, rewa
 
 Convergence condition:
 
-- Reward history is recorded every 1000 training steps.
-- Each reward history point stores the mean reward for that 1000-step window.
+- Reward history is recorded every 10000 training steps.
+- Each reward history point stores the mean reward for that 10000-step window.
 - Convergence is detected when the reward-history mean reaches 90% of its peak value for the first time.
 
 Reward history artifacts:

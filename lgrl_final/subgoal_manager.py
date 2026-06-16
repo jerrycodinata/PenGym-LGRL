@@ -20,6 +20,7 @@ class BaseSubgoalManager(ABC):
         self.current_subgoal = "EXPLOIT_ACCESS"
         self.just_completed = False
         self.episode_token_usage = 0
+        self.last_episode_token_usage = 0
 
     @abstractmethod
     def reset(self):
@@ -33,10 +34,15 @@ class BaseSubgoalManager(ABC):
         return self.current_subgoal
 
     def reset_token_usage(self):
+        # Preserve the most recent episode usage before resetting for the next episode.
+        self.last_episode_token_usage = int(self.episode_token_usage)
         self.episode_token_usage = 0
 
     def get_episode_token_usage(self) -> int:
         return int(self.episode_token_usage)
+
+    def get_last_episode_token_usage(self) -> int:
+        return int(self.last_episode_token_usage)
 
     def _add_token_usage(self, token_count: int):
         if token_count > 0:

@@ -1,0 +1,28 @@
+{
+  "config_name": "LGRL + Action Masking",
+  "scenario_name": "tiny-gen",
+  "scenario_path": null,
+  "run_label": "tiny-gen_LGRL___Action_Masking",
+  "run_config_path": "models_ablation/generated/tiny-gen_LGRL___Action_Masking/run_config.json",
+  "agent_type": "lgrl",
+  "use_action_masking": true,
+  "model_path": "models_ablation/generated/tiny-gen_LGRL___Action_Masking/lgrl_tiny-gen_(150_100ep)_2026-05-26_022004",
+  "reward_history_artifacts": {
+    "reward_history_path": "models_ablation/generated/tiny-gen_LGRL___Action_Masking/reward_history/tiny-gen_LGRL___Action_Masking_reward_history.json",
+    "reward_plot_path": "models_ablation/generated/tiny-gen_LGRL___Action_Masking/reward_history/tiny-gen_LGRL___Action_Masking_reward_history.png",
+    "average_return_plot_path": "models_ablation/generated/tiny-gen_LGRL___Action_Masking/reward_history/tiny-gen_LGRL___Action_Masking_average_return_over_training_steps.png"
+  },
+  "metrics": {
+    "success_rate": 1.0,
+    "average_steps": 6.38,
+    "average_return_per_training_episodes": 194.9813927688972,
+    "average_return_over_training_steps": 25.5138500316723,
+    "average_reward_over_training_steps": 25.5138500316723,
+    "convergence_timestep": 2000,
+    "convergence_speed_over_training_steps": 0.013196790540540541,
+    "average_token_usage": 0.0
+  },
+  "done": true,
+  "truncated": false,
+  "steps": 6
+}

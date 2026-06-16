@@ -38,7 +38,7 @@ class PPOTrainer:
         max_steps: int = 150,
         total_episodes: int = 100,
         eval_episodes: int = 5,
-        frame_memory: int = 1,
+        frame_memory: int = 3,
         window_size: int = 5,
         margin: int = 2,
         render_obs_state: bool = False,
@@ -414,8 +414,11 @@ class PPOTrainer:
                 success_count += 1 if done else 0
                 total_steps += ep_steps
                 total_cumulative_reward += ep_reward
-                if self.eval_subgoal_manager is not None and hasattr(self.eval_subgoal_manager, "get_episode_token_usage"):
-                    ep_token_usage = int(self.eval_subgoal_manager.get_episode_token_usage())
+                if self.eval_subgoal_manager is not None:
+                    if hasattr(self.eval_subgoal_manager, "get_last_episode_token_usage"):
+                        ep_token_usage = int(self.eval_subgoal_manager.get_last_episode_token_usage())
+                    elif hasattr(self.eval_subgoal_manager, "get_episode_token_usage"):
+                        ep_token_usage = int(self.eval_subgoal_manager.get_episode_token_usage())
                 total_tokens_used += ep_token_usage
 
                 print(f"\nEvaluation {ep + 1}/{episodes_per_seed} complete:")

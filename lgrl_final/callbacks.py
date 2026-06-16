@@ -9,7 +9,7 @@ class ConvergenceCallback(BaseCallback):
         ideal_steps: Optional[int] = None,
         window_size: int = 100,
         margin: int = 2,
-        reward_history_interval_steps: int = 1000,
+        reward_history_interval_steps: int = 10000,
         verbose: int = 0,
     ):
         super().__init__(verbose)
