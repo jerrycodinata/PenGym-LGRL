@@ -5,6 +5,7 @@ import json
 import re
 
 import gymnasium as gym
+import matplotlib
 import numpy as np
 import pengym.utilities as utils
 from pengym.storyboard import Storyboard
@@ -304,6 +305,7 @@ class PPOTrainer:
         }
         history_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+        matplotlib.use("Agg", force=True)   
         import matplotlib.pyplot as plt
 
         reward_steps = [entry["training_step"] for entry in reward_history]
