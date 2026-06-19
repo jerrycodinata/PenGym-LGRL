@@ -1,0 +1,37 @@
+{
+  "config_name": "Deterministic LGRL + Action Masking",
+  "scenario_name": "medium-gen",
+  "scenario_path": null,
+  "run_label": "medium-gen_Deterministic_LGRL___Action_Masking",
+  "run_root": "models_ablation/generated/medium-gen_2026-06-16_225327",
+  "agent_type": "lgrl",
+  "subgoal_manager_type": "deterministic",
+  "use_action_masking": true,
+  "train_seeds": [
+    1824,
+    409,
+    4506,
+    4012,
+    3657
+  ],
+  "eval_seeds": [
+    1000,
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008,
+    1009
+  ],
+  "num_seeds": 5,
+  "eval_episodes": null,
+  "total_timesteps": 500000,
+  "save_after_train": true,
+  "config_path": "/home/ubuntu/projects/PenGym-LGRL/pengym/CONFIG.yml",
+  "enable_pengym": null,
+  "enable_nasim": null,
+  "model_output_dir": "models_ablation/generated/medium-gen_2026-06-16_225327/medium-gen_Deterministic_LGRL___Action_Masking"
+}

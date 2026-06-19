@@ -1,0 +1,28 @@
+{
+  "config_name": "Pure LGRL",
+  "scenario_name": "medium-gen",
+  "scenario_path": null,
+  "run_label": "medium-gen_Pure_LGRL",
+  "run_config_path": "models_ablation/generated/medium-gen_2026-06-17_060539/medium-gen_Pure_LGRL/run_config.json",
+  "agent_type": "lgrl",
+  "use_action_masking": false,
+  "model_path": "models_ablation/generated/medium-gen_2026-06-17_060539/medium-gen_Pure_LGRL/lgrl_medium-gen_(150_100ep)_2026-06-17_173804",
+  "reward_history_artifacts": {
+    "reward_history_path": "models_ablation/generated/medium-gen_2026-06-17_060539/medium-gen_Pure_LGRL/reward_history/medium-gen_Pure_LGRL_reward_history.json",
+    "reward_plot_path": "models_ablation/generated/medium-gen_2026-06-17_060539/medium-gen_Pure_LGRL/reward_history/medium-gen_Pure_LGRL_reward_history.png",
+    "average_return_plot_path": "models_ablation/generated/medium-gen_2026-06-17_060539/medium-gen_Pure_LGRL/reward_history/medium-gen_Pure_LGRL_average_return_over_training_steps.png"
+  },
+  "metrics": {
+    "success_rate": 0.0,
+    "average_steps": 150.0,
+    "average_return_per_training_episodes": 73.30695016512672,
+    "average_return_over_training_steps": 0.9873726570496417,
+    "average_reward_over_training_steps": 0.9873726570496417,
+    "convergence_timestep": 130000,
+    "convergence_speed_over_training_steps": 0.06497089303991811,
+    "average_token_usage": 94.18
+  },
+  "done": false,
+  "truncated": true,
+  "steps": 150
+}

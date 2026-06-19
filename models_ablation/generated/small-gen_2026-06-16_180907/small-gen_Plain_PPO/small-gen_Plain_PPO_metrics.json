@@ -1,0 +1,28 @@
+{
+  "config_name": "Plain PPO",
+  "scenario_name": "small-gen",
+  "scenario_path": null,
+  "run_label": "small-gen_Plain_PPO",
+  "run_config_path": "models_ablation/generated/small-gen_2026-06-16_180907/small-gen_Plain_PPO/run_config.json",
+  "agent_type": "ppo",
+  "use_action_masking": false,
+  "model_path": "models_ablation/generated/small-gen_2026-06-16_180907/small-gen_Plain_PPO/ppo_small-gen_(150_100ep)_2026-06-16_181905",
+  "reward_history_artifacts": {
+    "reward_history_path": "models_ablation/generated/small-gen_2026-06-16_180907/small-gen_Plain_PPO/reward_history/small-gen_Plain_PPO_reward_history.json",
+    "reward_plot_path": "models_ablation/generated/small-gen_2026-06-16_180907/small-gen_Plain_PPO/reward_history/small-gen_Plain_PPO_reward_history.png",
+    "average_return_plot_path": "models_ablation/generated/small-gen_2026-06-16_180907/small-gen_Plain_PPO/reward_history/small-gen_Plain_PPO_average_return_over_training_steps.png"
+  },
+  "metrics": {
+    "success_rate": 0.0,
+    "average_steps": 150.0,
+    "average_return_per_training_episodes": 30.507831325301204,
+    "average_return_over_training_steps": 0.2525211256377551,
+    "average_reward_over_training_steps": 0.2525211256377551,
+    "convergence_timestep": 50000,
+    "convergence_speed_over_training_steps": 0.24912308673469388,
+    "average_token_usage": 0.0
+  },
+  "done": false,
+  "truncated": true,
+  "steps": 150
+}

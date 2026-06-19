@@ -1,0 +1,28 @@
+{
+  "config_name": "Deterministic LGRL",
+  "scenario_name": "medium-gen",
+  "scenario_path": null,
+  "run_label": "medium-gen_Deterministic_LGRL",
+  "run_config_path": "models_ablation/generated/medium-gen_2026-06-18_103157/medium-gen_Deterministic_LGRL/run_config.json",
+  "agent_type": "lgrl",
+  "use_action_masking": false,
+  "model_path": "models_ablation/generated/medium-gen_2026-06-18_103157/medium-gen_Deterministic_LGRL/lgrl_medium-gen_(150_100ep)_2026-06-18_172254",
+  "reward_history_artifacts": {
+    "reward_history_path": "models_ablation/generated/medium-gen_2026-06-18_103157/medium-gen_Deterministic_LGRL/reward_history/medium-gen_Deterministic_LGRL_reward_history.json",
+    "reward_plot_path": "models_ablation/generated/medium-gen_2026-06-18_103157/medium-gen_Deterministic_LGRL/reward_history/medium-gen_Deterministic_LGRL_reward_history.png",
+    "average_return_plot_path": "models_ablation/generated/medium-gen_2026-06-18_103157/medium-gen_Deterministic_LGRL/reward_history/medium-gen_Deterministic_LGRL_average_return_over_training_steps.png"
+  },
+  "metrics": {
+    "success_rate": 0.0,
+    "average_steps": 150.0,
+    "average_return_per_training_episodes": 138.30359176854734,
+    "average_return_over_training_steps": 2.7307556214815762,
+    "average_reward_over_training_steps": 2.7307556214815762,
+    "convergence_timestep": 230000,
+    "convergence_speed_over_training_steps": 0.11494850307062436,
+    "average_token_usage": 0.0
+  },
+  "done": false,
+  "truncated": true,
+  "steps": 150
+}
