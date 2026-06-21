@@ -22,6 +22,12 @@ CONFIG_ORDER = [
     "LGRL + Action Masking",
 ]
 
+ENVIRONMENTS = [
+    {"prefix": "tiny-gen_2026-", "name": "tiny", "interval_steps": 10000},
+    {"prefix": "small-gen_2026-", "name": "small", "interval_steps": 10000},
+    {"prefix": "medium-gen_2026-", "name": "medium", "interval_steps": 50000},
+]
+
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -107,12 +113,9 @@ def _aggregate_mean_data(
 
             for row in config.get("reward_history", []):
                 step = int(row.get("training_step", 0))
-                reward_count = int(row.get("reward_count", 0))
                 if step <= 0:
                     continue
                 if step % interval_steps != 0:
-                    continue
-                if reward_count < interval_steps:
                     continue
                 curve_accumulator[config_name][step].append(float(row.get("mean_reward", 0.0)))
 
@@ -193,7 +196,7 @@ def _plot_mean_average_steps(mean_average_steps: Dict[str, float], output_path: 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate mean learning curve and mean average-steps plots from latest tiny-gen runs.",
+        description="Generate mean learning curve and mean average-steps plots from latest runs for tiny, small, and medium environments.",
     )
     parser.add_argument(
         "--runs-root",
@@ -209,15 +212,10 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--run-prefix",
-        default="tiny-gen_2026-",
-        help="Run directory prefix used to select runs.",
-    )
-    parser.add_argument(
         "--num-runs",
         type=int,
         default=3,
-        help="Number of latest runs to aggregate (default: 3).",
+        help="Number of latest runs to aggregate per environment (default: 3).",
     )
     parser.add_argument(
         "--interval-steps",
@@ -230,11 +228,6 @@ def main() -> None:
         default="models_ablation/generated/images",
         help="Output directory for generated images.",
     )
-    parser.add_argument(
-        "--image-prefix",
-        default="tiny_gen_mean_last3",
-        help="Filename prefix for generated images.",
-    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent
@@ -242,37 +235,49 @@ def main() -> None:
     output_dir = (repo_root / args.output_dir).resolve() if not Path(args.output_dir).is_absolute() else Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.run_dirs:
-        latest_runs = _parse_explicit_run_dirs(args.run_dirs, repo_root)
-    else:
-        latest_runs = _find_latest_run_dirs(runs_root, args.run_prefix, args.num_runs)
-        if len(latest_runs) < args.num_runs:
-            print(
-                f"Warning: requested {args.num_runs} runs but found {len(latest_runs)} for prefix '{args.run_prefix}'. "
-                "Using available runs."
-            )
-    run_payloads = [_collect_run_data(run_dir) for run_dir in latest_runs]
+    # Process each environment
+    for env_config in ENVIRONMENTS:
+        env_name = env_config["name"]
+        env_prefix = env_config["prefix"]
 
-    mean_curves, mean_average_steps = _aggregate_mean_data(run_payloads, args.interval_steps)
+        if args.run_dirs:
+            latest_runs = _parse_explicit_run_dirs(args.run_dirs, repo_root)
+        else:
+            try:
+                latest_runs = _find_latest_run_dirs(runs_root, env_prefix, args.num_runs)
+            except ValueError as e:
+                print(f"Skipping {env_name}: {e}")
+                continue
+            if len(latest_runs) < args.num_runs:
+                print(
+                    f"Warning ({env_name}): requested {args.num_runs} runs but found {len(latest_runs)} for prefix '{env_prefix}'. "
+                    "Using available runs."
+                )
 
-    curve_out = output_dir / f"{args.image_prefix}_learning_curve.png"
-    as_out = output_dir / f"{args.image_prefix}_average_steps.png"
+        run_payloads = [_collect_run_data(run_dir) for run_dir in latest_runs]
 
-    _plot_mean_learning_curves(
-        mean_curves,
-        curve_out,
-        title=f"Mean Average Return Over Training Steps ({args.num_runs} latest runs)",
-    )
-    _plot_mean_average_steps(
-        mean_average_steps,
-        as_out,
-        title=f"Mean Average Steps by Configuration ({args.num_runs} latest runs)",
-    )
+        interval_steps = env_config["interval_steps"]
+        mean_curves, mean_average_steps = _aggregate_mean_data(run_payloads, interval_steps)
 
-    selected = ", ".join(run.name for run in latest_runs)
-    print(f"Used runs: {selected}")
-    print(f"Saved mean learning curve to: {curve_out}")
-    print(f"Saved mean average steps chart to: {as_out}")
+        curve_out = output_dir / f"{env_name}_gen_mean_last3_learning_curve.png"
+        as_out = output_dir / f"{env_name}_gen_mean_last3_average_steps.png"
+
+        _plot_mean_learning_curves(
+            mean_curves,
+            curve_out,
+            title=f"Mean Average Return Over Training Steps ({env_name.capitalize()}, {args.num_runs} latest runs, every {interval_steps} steps)",
+        )
+        _plot_mean_average_steps(
+            mean_average_steps,
+            as_out,
+            title=f"Mean Average Steps by Configuration ({env_name.capitalize()}, {args.num_runs} latest runs)",
+        )
+
+        selected = ", ".join(run.name for run in latest_runs)
+        print(f"{env_name.upper()}: Used runs: {selected}")
+        print(f"{env_name.upper()}: Saved mean learning curve to: {curve_out}")
+        print(f"{env_name.upper()}: Saved mean average steps chart to: {as_out}")
+        print()
 
 
 if __name__ == "__main__":
