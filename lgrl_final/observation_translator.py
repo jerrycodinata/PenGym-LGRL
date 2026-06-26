@@ -3,7 +3,7 @@ from typing import Optional
 import numpy as np
 
 from lgrl_final.scenario_specs import get_scenario_spec
-
+from nasim.envs.utils import AccessLevel
 
 class ObservationTranslator:
     """Translate flat NASIM observations into text for LLM prompting/debugging."""
@@ -175,8 +175,8 @@ class ObservationTranslator:
     @staticmethod
     def _access_to_label(access: float) -> str:
         level = int(round(float(access)))
-        if level <= 0:
+        if level == AccessLevel.NONE:
             return "NONE"
-        if level == 1:
+        if level == AccessLevel.USER:
             return "USER"
         return "ROOT"
