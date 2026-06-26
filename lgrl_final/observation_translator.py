@@ -13,15 +13,6 @@ class ObservationTranslator:
         self.scenario = scenario
         self.desc = None
 
-    def update(self, observation):
-        self.observation = observation
-
-    def get_detail(self, scenario: Optional[str] = None):
-        scenario_name = scenario or self.scenario
-        if scenario_name is None:
-            raise ValueError("Scenario is not set.")
-        return get_scenario_spec(scenario_name)
-
     def translate(self, observation=None, scenario: Optional[str] = None):
         obs = self.observation if observation is None else observation
         scenario_name = self.scenario if scenario is None else scenario
@@ -44,10 +35,6 @@ class ObservationTranslator:
 
         host_rows = self._reshape_flat_observation(arr, cfg)
         return self._format_text(host_rows, cfg, scenario_name)
-
-    def get_description(self) -> str:
-        self.desc = self.translate()
-        return self.desc
 
     @staticmethod
     def _host_row_size(cfg) -> int:
