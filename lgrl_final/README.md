@@ -231,7 +231,7 @@ train(...):
 1. Resolve scenario_name/scenario_path.
 2. If model_path is provided, skip training and load model.
 3. Build train env factory using EnvFactory.build_train_env_factory(...).
-4. Wrap with DummyVecEnv and VecFrameStack.
+4. Wrap with DummyVecEnv.
 5. Build MaskablePPO with configured hyperparameters.
 6. Attach ConvergenceCallback using scenario-specific IDEAL_STEPS when available.
 7. Learn with use_masking flag matching current mode.
@@ -273,7 +273,6 @@ Wrappers are applied in this order:
 3. If LGRL mode:
    - SubgoalUpdateWrapper
    - SubgoalObsWrapper
-   - SubgoalRewardWrapper (optional intrinsic reward)
 4. Monitor
 5. ActionMasker (if masking enabled)
 

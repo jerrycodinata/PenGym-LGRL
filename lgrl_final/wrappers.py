@@ -43,18 +43,6 @@ class SubgoalObsWrapper(gym.ObservationWrapper):
         return np.concatenate([obs.astype(np.float32), g_vec])
 
 
-class SubgoalRewardWrapper(gym.RewardWrapper):
-    def __init__(self, env, subgoal_manager, lambda_=0.5):
-        super().__init__(env)
-        self.subgoal_manager = subgoal_manager
-        self.lambda_ = lambda_
-
-    def reward(self, reward):
-        if self.subgoal_manager.just_completed:
-            return reward + self.lambda_
-        return reward
-
-
 class SubgoalUpdateWrapper(gym.Wrapper):
     def __init__(self, env, subgoal_manager):
         super().__init__(env)

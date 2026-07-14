@@ -11,7 +11,6 @@ from lgrl_final.action_mask import CustomActionMask
 from lgrl_final.wrappers import (
     IntActionWrapper,
     SubgoalObsWrapper,
-    SubgoalRewardWrapper,
     SubgoalUpdateWrapper,
 )
 
@@ -29,16 +28,12 @@ class EnvFactory:
         max_steps: int,
         action_mask_fn: MaskFn = CustomActionMask.mask_fn,
         enable_action_masking: bool = True,
-        intrinsic_reward: bool = False,
-        intrinsic_reward_lambda: float = 10.0,
     ):
         self.agent_type = agent_type
         self.subgoal_manager = subgoal_manager
         self.max_steps = max_steps
         self.action_mask_fn = action_mask_fn
         self.enable_action_masking = enable_action_masking
-        self.intrinsic_reward = intrinsic_reward
-        self.intrinsic_reward_lambda = intrinsic_reward_lambda
 
     @staticmethod
     def create_pengym_env(scenario_name, seed=None):
@@ -56,21 +51,16 @@ class EnvFactory:
         kwargs = {
             "llm_guidance": self.agent_type == self.AGENT_TYPE_LGRL,
             "subgoal_manager": self.subgoal_manager,
-            "intrinsic_reward": self.intrinsic_reward,
-            "intrinsic_reward_lambda": self.intrinsic_reward_lambda,
         }
         return kwargs
 
-    def _apply_wrappers(self, env: gym.Env, llm_guidance: bool, subgoal_manager, intrinsic_reward: bool, intrinsic_reward_lambda: float):
+    def _apply_wrappers(self, env: gym.Env, llm_guidance: bool, subgoal_manager):
         env = IntActionWrapper(env)
         env = gym.wrappers.TimeLimit(env, max_episode_steps=self.max_steps)
 
         if llm_guidance:
             env = SubgoalUpdateWrapper(env, subgoal_manager)
             env = SubgoalObsWrapper(env, subgoal_manager)
-
-            if intrinsic_reward:
-                env = SubgoalRewardWrapper(env, subgoal_manager, lambda_=intrinsic_reward_lambda)
 
         # Keep ActionMasker outermost so VecEnv lookups can discover action_masks().
         env = Monitor(env)

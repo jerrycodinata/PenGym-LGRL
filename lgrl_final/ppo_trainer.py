@@ -10,7 +10,7 @@ import numpy as np
 import pengym.utilities as utils
 from pengym.storyboard import Storyboard
 from sb3_contrib import MaskablePPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 from lgrl_final.action_mask import CustomActionMask
 from lgrl_final.callbacks import ConvergenceCallback
@@ -39,7 +39,6 @@ class PPOTrainer:
         max_steps: int = 150,
         total_episodes: int = 100,
         eval_episodes: int = 5,
-        frame_memory: int = 3,
         window_size: int = 5,
         margin: int = 2,
         render_obs_state: bool = False,
@@ -61,7 +60,6 @@ class PPOTrainer:
         self.max_steps = max_steps
         self.total_episodes = total_episodes
         self.eval_episodes = eval_episodes
-        self.frame_memory = frame_memory
         self.window_size = window_size
         self.margin = margin
         self.render_obs_state = render_obs_state
@@ -113,7 +111,7 @@ class PPOTrainer:
             self.train_subgoal_manager = None
             self.eval_subgoal_manager = None
 
-        # Keep this alias for compatibility with any external callers.
+        # Compatibility with any external callers.
         self.subgoal_manager = self.train_subgoal_manager
 
         self.train_env_factory = EnvFactory(
@@ -242,7 +240,6 @@ class PPOTrainer:
             train_seeds=train_seeds,
         )
         vec_env = DummyVecEnv([env_fn])
-        vec_env = VecFrameStack(vec_env, n_stack=self.frame_memory)
 
         self.model = self._build_model(vec_env)
 
@@ -375,7 +372,7 @@ class PPOTrainer:
                 eval_env_fn = self.eval_env_factory.make_eval_env(resolved_name, seed)
 
             eval_env = DummyVecEnv([eval_env_fn])
-            eval_vec_env = VecFrameStack(eval_env, n_stack=self.frame_memory)
+            eval_vec_env = eval_env
 
             for ep in range(episodes_per_seed):
                 print(f"\n=== Evaluation Episode {ep + 1}/{episodes_per_seed} (seed={seed}) ===")
